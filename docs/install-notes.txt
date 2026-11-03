@@ -1,0 +1,12 @@
+What Folder Colorizer changes on this PC
+
+Folder Colorizer is installed for your Windows user only. It:
+
+- Adds "Folder color" to the right-click menu of folders.
+- Starts a small background app when you sign in, so Ctrl+Shift+F can open the color picker in File Explorer.
+- Writes a hidden desktop.ini file into a folder only when you give that folder a color, the same way File Explorer's own Change Icon does.
+- Keeps generated folder icons in %LOCALAPPDATA%\FolderColorizer.
+
+You can turn the menu and the background app off at any time in Folder Colorizer's Settings. Uninstalling (Settings > Apps) removes the menu, the background app and its startup entry. Colored folders keep their color until you restore them.
+
+Folder Colorizer does not connect to the internet and does not collect any data.

@@ -51,6 +51,19 @@ Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download) and [Inno Setup 6
 
 The installer lands in `installer\`. Pushing a tag such as `v1.1.0` makes GitHub Actions build it and publish a release.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org) (once the project's application is approved; releases until then are unsigned).
+
+- Committers and reviewers: [Das7ardly](https://github.com/Das7ardly)
+- Approvers: [Das7ardly](https://github.com/Das7ardly)
+
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the tagged source in this repository, and each signing request is approved by hand.
+
+### Privacy policy
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
 ## License
 
 [MIT](LICENSE)

@@ -19,6 +19,14 @@ OutputDir=installer
 OutputBaseFilename=FolderColorizer-Setup-{#AppVersion}
 SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#AppExe}
+; Shown before installing: every system change the app makes.
+InfoBeforeFile=docs\install-notes.txt
+VersionInfoProductName={#AppName}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
+VersionInfoDescription={#AppName} Setup
+AppPublisherURL=https://github.com/Das7ardly/FolderColorizer
+AppSupportURL=https://github.com/Das7ardly/FolderColorizer/issues
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

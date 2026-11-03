@@ -51,3 +51,6 @@ jobs:
             installer/*.exe
             installer/SHA256SUMS.txt
           generate_release_notes: true
+          body: |
+            Windows 10/11 x64 installer. Built by GitHub Actions from this tag; check the download against SHA256SUMS.txt.
+            Code signing policy: see the [README](https://github.com/Das7ardly/FolderColorizer#code-signing-policy).

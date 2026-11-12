@@ -21,7 +21,15 @@ sealed class ColorPage : Page
     readonly SwatchGrid swatches = new();
     readonly FlatButton customButton = new("Custom color…", ButtonKind.Secondary, IconKind.Brush);
     readonly FlatButton restoreButton = new("Restore default", ButtonKind.Ghost, IconKind.Reset);
+    readonly Label lookHeading = UiText.Make("Look", Theme.Heading, Theme.Text);
+    readonly Segmented materialChoice = new("Classic", "Frosted", "Liquid glass");
+    readonly Segmented styleChoice = new("Window", "Card", "Fan", "Plain");
     readonly Label styleHint = UiText.Make("", Theme.Small, Theme.TextMuted, wrap: true);
+
+    // Segment order -> enum values.
+    static readonly FolderMaterial[] Materials = [FolderMaterial.Classic, FolderMaterial.Glass, FolderMaterial.Liquid];
+    static readonly PreviewStyle[] Styles = [PreviewStyle.Window, PreviewStyle.Card, PreviewStyle.Fan, PreviewStyle.Plain];
+    Look SelectedLook => new(Styles[styleChoice.SelectedIndex], Materials[materialChoice.SelectedIndex]);
     readonly FlatButton applyButton = new("Apply color", ButtonKind.Primary, IconKind.Check);
     readonly FlatButton anotherButton = new("Choose another folder", ButtonKind.Ghost, IconKind.Folder);
     readonly Label status = UiText.Make("", Theme.Small, Theme.Accent);
@@ -41,7 +49,10 @@ sealed class ColorPage : Page
                 dropCard.Highlight ? Theme.Accent : Theme.TextMuted, 1.6f);
         };
         previewCard.Controls.AddRange([preview, folderName, folderPath, currentLabel]);
-        colorCard.Controls.AddRange([colorHeading, colorName, swatches, customButton, restoreButton, styleHint, applyButton, anotherButton, status]);
+        colorCard.Controls.AddRange([colorHeading, colorName, swatches, customButton, restoreButton,
+            lookHeading, materialChoice, styleChoice, styleHint, applyButton, anotherButton, status]);
+        materialChoice.SelectedChanged += (_, _) => { status.Text = ""; RenderPreview(); };
+        styleChoice.SelectedChanged += (_, _) => { status.Text = ""; UpdateHint(); RenderPreview(); };
         Controls.AddRange([dropCard, previewCard, colorCard]);
 
         chooseButton.Click += (_, _) => Browse();
@@ -99,16 +110,15 @@ sealed class ColorPage : Page
         folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         previews.ForEach(p => p.Dispose());
         Cursor = Cursors.WaitCursor;
-        try { previews = FolderIcon.LoadPreviews(FolderIcon.PreviewFilesFor(folder, AppSettings.Load().PreviewStyle)); }
+        try { previews = FolderIcon.LoadPreviews(FolderIcon.PickPreviewFiles(folder)); }
         finally { Cursor = Cursors.Default; }
 
-        var style = AppSettings.Load().PreviewStyle;
-        styleHint.Text = style == PreviewStyle.Plain
-            ? "File previews are off (Plain style). You can turn them on in Settings."
-            : previews.Count == 0
-                ? "This folder has no files to preview, so it gets the plain color."
-                : $"Shows the newest files inside ({style} style). You can change the style in Settings.";
-        folderName.Text = Path.GetFileName(folder);
+        // Start from the look the folder already has (or the default from Settings).
+        var look = FolderIcon.LookOf(folder);
+        materialChoice.SetQuietly(Array.IndexOf(Materials, look.Material));
+        styleChoice.SetQuietly(Array.IndexOf(Styles, look.Style));
+        UpdateHint();
+        folderName.Text = Path.GetFileName(folder) is { Length: > 0 } name ? name : folder;
         folderPath.Text = folder;
         tips.SetToolTip(folderPath, folder);
         var current = FolderIcon.ColorOf(folder);
@@ -124,18 +134,27 @@ sealed class ColorPage : Page
     static string NameOf(Color c) =>
         Palette.Colors.FirstOrDefault(p => p.Color.ToArgb() == c.ToArgb())?.Name ?? $"custom #{Palette.Hex(c).ToUpperInvariant()}";
 
+    void UpdateHint() => styleHint.Text = Styles[styleChoice.SelectedIndex] == PreviewStyle.Plain
+        ? "Color only, no file previews."
+        : previews.Count == 0
+            ? "This folder has no files to preview, so it gets the plain color."
+            : "The newest pictures and files inside show through. The icon updates when they change.";
+
+    // Exactly what Apply will write: same color, look and files.
     void RenderPreview()
     {
         if (folder == null || swatches.SelectedColor is not { } color) return;
-        preview.Image = IconMaker.DrawFolder(256, color, previews, AppSettings.Load().PreviewStyle);
+        var look = SelectedLook;
+        preview.Image = IconMaker.DrawFolder(256, color, look.Style == PreviewStyle.Plain ? null : previews, look.Style, look.Material);
     }
 
     void Apply()
     {
         if (folder == null || swatches.SelectedColor is not { } color) return;
         string target = folder, name = swatches.SelectedName;
+        var look = SelectedLook;
         SetBusy(true, "Applying…");
-        RunInBackground(() => FolderIcon.Apply(target, color), error =>
+        RunInBackground(() => FolderIcon.Apply(target, color, look), error =>
         {
             SetBusy(false, "");
             Report(error, $"Done. {Path.GetFileName(target)} is now {name.ToLowerInvariant()}.", status);
@@ -158,7 +177,7 @@ sealed class ColorPage : Page
 
     void SetBusy(bool busy, string message)
     {
-        foreach (var b in new Control[] { applyButton, customButton, anotherButton, swatches }) b.Enabled = !busy;
+        foreach (var b in new Control[] { applyButton, customButton, anotherButton, swatches, materialChoice, styleChoice }) b.Enabled = !busy;
         restoreButton.Enabled = !busy && folder != null && FolderIcon.ColorOf(folder) != null;
         status.ForeColor = Theme.TextMuted;
         status.Text = message;
@@ -185,7 +204,7 @@ sealed class ColorPage : Page
         chooseButton.Location = new Point(cx - chooseButton.Width / 2, dropOr.Bottom + (int)(10 * S));
         dropTip.Location = new Point(cx - dropTip.Width / 2, dropCard.Height - dropTip.Height - (int)(20 * S));
 
-        int pw = (int)(300 * S), gap = (int)(20 * S), ch = Math.Min(h, (int)(430 * S));
+        int pw = (int)(300 * S), gap = (int)(20 * S), ch = Math.Min(h, (int)(500 * S));
         previewCard.Bounds = new Rectangle(Pad, top, pw, ch);
         int inner = pw - (int)(40 * S);
         preview.Bounds = new Rectangle((int)(20 * S), (int)(20 * S), inner, inner);
@@ -204,9 +223,14 @@ sealed class ColorPage : Page
         restoreButton.Size = restoreButton.GetPreferredSize(Size.Empty);
         customButton.Location = new Point(x, swatches.Bottom + (int)(14 * S));
         restoreButton.Location = new Point(customButton.Right + (int)(8 * S), customButton.Top);
+        lookHeading.Location = new Point(x, customButton.Bottom + (int)(22 * S));
+        materialChoice.Size = materialChoice.GetPreferredSize(Size.Empty);
+        styleChoice.Size = styleChoice.GetPreferredSize(Size.Empty);
+        materialChoice.Location = new Point(x, lookHeading.Bottom + (int)(10 * S));
+        styleChoice.Location = new Point(x, materialChoice.Bottom + (int)(8 * S));
         styleHint.MaximumSize = new Size(colorCard.Width - x * 2, 0);
         styleHint.Size = styleHint.GetPreferredSize(new Size(styleHint.MaximumSize.Width, 0));
-        styleHint.Location = new Point(x, customButton.Bottom + (int)(18 * S));
+        styleHint.Location = new Point(x, styleChoice.Bottom + (int)(8 * S));
 
         applyButton.Size = new Size(applyButton.GetPreferredSize(Size.Empty).Width + (int)(24 * S), (int)(44 * S));
         anotherButton.Size = anotherButton.GetPreferredSize(Size.Empty);

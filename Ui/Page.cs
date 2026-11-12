@@ -20,6 +20,12 @@ abstract class Page : UserControl
         Controls.Add(SubtitleLabel);
     }
 
+    protected override void OnPaintBackground(PaintEventArgs e) => Backdrop.Paint(this, e.Graphics, blur: false);
+
+    // The backdrop stays put while content scrolls, so repaint everything on scroll.
+    protected override void OnScroll(ScrollEventArgs se) { base.OnScroll(se); Invalidate(true); }
+    protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); if (AutoScroll) Invalidate(true); }
+
     // Called each time the page is shown.
     public virtual void Activate() { }
 
@@ -44,19 +50,8 @@ abstract class Page : UserControl
 
     // Runs shell work on a background STA thread (thumbnails and folder settings use COM),
     // then reports back on the UI thread.
-    protected void RunInBackground(Action work, Action<Exception?> done)
-    {
-        var t = new Thread(() =>
-        {
-            Exception? error = null;
-            try { work(); }
-            catch (Exception ex) { error = ex; }
-            if (!IsDisposed) BeginInvoke(() => done(error));
-        });
-        t.SetApartmentState(ApartmentState.STA);
-        t.IsBackground = true;
-        t.Start();
-    }
+    protected void RunInBackground(Action work, Action<Exception?> done) =>
+        StaWorker.Run(work, error => { if (!IsDisposed) done(error); });
 
     protected void Report(Exception? error, string ok, Label status)
     {

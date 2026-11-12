@@ -7,6 +7,10 @@ namespace FolderColorizer;
 // Plain: the color only, no file previews.
 enum PreviewStyle { Card, Fan, Window, Plain }
 
+// Classic: flat Windows 11 look. Glass: frosted, translucent front panel.
+// Liquid: clear glass like macOS 26, bending what's behind it at the edges, with bright rims.
+enum FolderMaterial { Classic, Glass, Liquid }
+
 static class IconMaker
 {
     // Bump when the drawing changes, so Explorer's icon cache sees new file names.
@@ -22,14 +26,20 @@ static class IconMaker
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FolderColorizer");
     static string IconDir => Path.Combine(DataDir, "icons");
 
-    public static string EnsureIcon(Color c) => Ensure($"{Version}_{Palette.Hex(c)}.ico", s => DrawFolder(s, c));
+    // Shared icon for a color without file previews (also used by the right-click menu).
+    public static string EnsureIcon(Color c, FolderMaterial material = FolderMaterial.Classic) => material switch
+    {
+        FolderMaterial.Glass => Ensure($"glass1_{Palette.Hex(c)}.ico", s => DrawFolder(s, c, material: material)),
+        FolderMaterial.Liquid => Ensure($"liquid1_{Palette.Hex(c)}.ico", s => DrawFolder(s, c, material: material)),
+        _ => Ensure($"{Version}_{Palette.Hex(c)}.ico", s => DrawFolder(s, c)),
+    };
 
     // A one-off icon for a folder that shows its files. The name changes on every
     // write so Explorer's icon cache can't keep showing the old contents.
-    public static string WriteFolderIcon(string folder, Color c, IReadOnlyList<Preview> previews, PreviewStyle style)
+    public static string WriteFolderIcon(string folder, Color c, IReadOnlyList<Preview> previews, PreviewStyle style, FolderMaterial material)
     {
         var path = NewFolderIconPath(folder);
-        WriteIco(path, s => DrawFolder(s, c, s >= MinPreviewSize ? previews : null, style));
+        WriteIco(path, s => DrawFolder(s, c, s >= MinPreviewSize ? previews : null, style, material));
         return path;
     }
 
@@ -98,9 +108,252 @@ static class IconMaker
 
     public static PreviewStyle Style = PreviewStyle.Window;
 
-    public static Bitmap DrawFolder(int size, Color c, IReadOnlyList<Preview>? previews = null, PreviewStyle? style = null) =>
-        Draw(size, Shade(c, -0.2f), (r, alpha) => new LinearGradientBrush(r,
-            Color.FromArgb(alpha, Shade(c, 0.16f)), Color.FromArgb(alpha, c), LinearGradientMode.Vertical), previews, style ?? Style);
+    public static Bitmap DrawFolder(int size, Color c, IReadOnlyList<Preview>? previews = null, PreviewStyle? style = null,
+        FolderMaterial material = FolderMaterial.Classic) =>
+        material == FolderMaterial.Glass ? DrawGlass(size, c, previews, style ?? Style)
+        : material == FolderMaterial.Liquid ? DrawLiquid(size, c, previews, style ?? Style)
+        : Draw(size, Shade(c, -0.2f), (r, alpha) => new LinearGradientBrush(r,
+                Color.FromArgb(alpha, Shade(c, 0.16f)), Color.FromArgb(alpha, c), LinearGradientMode.Vertical), previews, style ?? Style);
+
+    // Frosted glass: a deep, tinted back panel, and a translucent front panel that shows a
+    // blurred copy of whatever is behind it (the back panel and the file previews), with a
+    // soft sheen and a bright rim along the top edge.
+    static Bitmap DrawGlass(int size, Color c, IReadOnlyList<Preview>? previews, PreviewStyle style)
+    {
+        float k = size / 256f;
+        using var scene = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        float top;
+        using (var g = Canvas(scene, k))
+        {
+            using (var b = new LinearGradientBrush(new RectangleF(16, 29, 224, 186),
+                       Color.FromArgb(185, Shade(c, 0.08f)), Color.FromArgb(218, Shade(c, -0.34f)), 90f))
+            using (var tab = RoundRect(new RectangleF(16, 30, 100, 40), 12))
+            using (var body = RoundRect(new RectangleF(16, 46, 224, 168), 14))
+            {
+                g.FillPath(b, tab);
+                g.FillPath(b, body);
+            }
+            using (var rim = new Pen(Color.FromArgb(80, 255, 255, 255), 2f))
+                g.DrawLine(rim, 29, 31.5f, 103, 31.5f);
+            top = previews is { Count: > 0 } ? DrawContents(g, previews, style).top : 84;
+        }
+
+        var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using var o = Canvas(bmp, 1);
+        o.DrawImage(scene, 0, 0, size, size);
+        o.ScaleTransform(k, k);
+
+        var fr = new RectangleF(16, top, 224, 214 - top);
+        using var front = RoundRect(fr, 14);
+        var state = o.Save();
+        o.SetClip(front);
+        using (var blurred = Blur(scene))
+        {
+            o.ResetTransform();
+            o.DrawImage(blurred, 0, 0, size, size);
+            o.ScaleTransform(k, k);
+        }
+        // Tint: lighter at the top, like light passing through coloured glass.
+        using (var tint = new LinearGradientBrush(RectangleF.Inflate(fr, 0, 1),
+                   Color.FromArgb(118, Shade(c, 0.4f)), Color.FromArgb(165, Shade(c, -0.02f)), 90f))
+            o.FillPath(tint, front);
+        // Sheen over the upper part of the panel.
+        var sheen = new RectangleF(fr.X, fr.Y, fr.Width, fr.Height * 0.75f);
+        using (var gloss = new LinearGradientBrush(RectangleF.Inflate(sheen, 0, 2), Color.White, Color.Transparent, 90f)
+        {
+            WrapMode = WrapMode.TileFlipXY,
+            // Eases out instead of stopping at a hard edge.
+            InterpolationColors = new ColorBlend
+            {
+                Colors = [Color.FromArgb(110, 255, 255, 255), Color.FromArgb(45, 255, 255, 255), Color.FromArgb(12, 255, 255, 255), Color.FromArgb(0, 255, 255, 255)],
+                Positions = [0f, 0.3f, 0.65f, 1f],
+            },
+        })
+            o.FillRectangle(gloss, sheen);
+        o.Restore(state);
+
+        // Bright rim on top fading out downwards, and a thin darker outline for definition.
+        using (var rimBrush = new LinearGradientBrush(RectangleF.Inflate(fr, 0, 1),
+                   Color.FromArgb(220, 255, 255, 255), Color.FromArgb(30, 255, 255, 255), 90f))
+        using (var rim = new Pen(rimBrush, 2f))
+        using (var inner = RoundRect(RectangleF.Inflate(fr, -1, -1), 13))
+            o.DrawPath(rim, inner);
+        using (var edge = new Pen(Color.FromArgb(90, Shade(c, -0.55f)), 1.2f))
+            o.DrawPath(edge, front);
+        return bmp;
+    }
+
+    // Liquid glass: almost clear, a little magnification where the glass curves at its edges,
+    // a light tint that deepens towards the bottom, and specular rims (bright top-left,
+    // softer bottom-right) that give the panel its thickness.
+    // Opacity of the liquid-glass body (top and bottom of its gradient): low enough that the
+    // wallpaper shows through, high enough that the color still reads at 16 px.
+    const int LiquidBodyTop = 140, LiquidBodyBottom = 192;
+
+    static Bitmap DrawLiquid(int size, Color c, IReadOnlyList<Preview>? previews, PreviewStyle style)
+    {
+        float k = size / 256f;
+        using var scene = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        float top;
+        using (var g = Canvas(scene, k))
+        {
+            // The body itself is partly see-through, so the wallpaper shows through like macOS glass.
+            using (var b = new LinearGradientBrush(new RectangleF(16, 29, 224, 186),
+                       Color.FromArgb(LiquidBodyTop, Shade(c, 0.18f)), Color.FromArgb(LiquidBodyBottom, Shade(c, -0.28f)), 90f))
+            using (var tab = RoundRect(new RectangleF(16, 30, 100, 40), 12))
+            using (var body = RoundRect(new RectangleF(16, 46, 224, 168), 14))
+            {
+                g.FillPath(b, tab);
+                g.FillPath(b, body);
+            }
+            using (var rim = new Pen(Color.FromArgb(150, 255, 255, 255), 2f))
+                g.DrawLine(rim, 29, 31.5f, 103, 31.5f);
+            using (var bodyRim = new Pen(Color.FromArgb(70, 255, 255, 255), 1.4f))
+            using (var bodyEdge = RoundRect(new RectangleF(16.7f, 46.7f, 222.6f, 166.6f), 13.3f))
+                g.DrawPath(bodyRim, bodyEdge);
+            top = previews is { Count: > 0 } ? DrawContents(g, previews, style).top : 92;
+        }
+
+        var fr = new RectangleF(16, top, 224, 214 - top);
+        var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using var o = Canvas(bmp, 1);
+        o.DrawImage(scene, 0, 0, size, size);
+        o.ScaleTransform(k, k);
+        using var front = RoundRect(fr, 16);
+
+        var state = o.Save();
+        o.SetClip(front);
+        using (var lensed = Refract(scene, new RectangleF(fr.X * k, fr.Y * k, fr.Width * k, fr.Height * k), 24 * k, 12 * k))
+        {
+            o.ResetTransform();
+            o.DrawImage(lensed, 0, 0, size, size);
+            o.ScaleTransform(k, k);
+        }
+        using (var tint = new LinearGradientBrush(RectangleF.Inflate(fr, 0, 1),
+                   Color.FromArgb(28, Shade(c, 0.6f)), Color.FromArgb(70, Shade(c, 0.05f)), 90f))
+            o.FillPath(tint, front);
+        // A thin sheen along the top, and a little shade at the bottom for thickness.
+        var sheen = new RectangleF(fr.X, fr.Y, fr.Width, Math.Min(26, fr.Height * 0.3f));
+        using (var gloss = new LinearGradientBrush(RectangleF.Inflate(sheen, 0, 1),
+                   Color.FromArgb(85, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
+            o.FillRectangle(gloss, sheen);
+        var shade = new RectangleF(fr.X, fr.Bottom - Math.Min(22, fr.Height * 0.3f), fr.Width, Math.Min(22, fr.Height * 0.3f));
+        using (var dark = new LinearGradientBrush(RectangleF.Inflate(shade, 0, 1),
+                   Color.FromArgb(0, 0, 0, 0), Color.FromArgb(40, Shade(c, -0.6f)), 90f))
+            o.FillRectangle(dark, shade);
+        o.Restore(state);
+
+        // Specular rim: bright at the top-left, fading, then a softer glint at the bottom-right.
+        using (var rimBrush = new LinearGradientBrush(RectangleF.Inflate(fr, 2, 2), Color.White, Color.White, 35f)
+        {
+            InterpolationColors = new ColorBlend
+            {
+                Colors = [Color.FromArgb(240, 255, 255, 255), Color.FromArgb(70, 255, 255, 255), Color.FromArgb(25, 255, 255, 255),
+                          Color.FromArgb(60, 255, 255, 255), Color.FromArgb(170, 255, 255, 255)],
+                Positions = [0f, 0.25f, 0.55f, 0.8f, 1f],
+            },
+        })
+        using (var rim = new Pen(rimBrush, 2.2f))
+        using (var inner = RoundRect(RectangleF.Inflate(fr, -1.1f, -1.1f), 15))
+            o.DrawPath(rim, inner);
+        using (var glow = new Pen(Color.FromArgb(45, 255, 255, 255), 1.2f))
+        using (var deeper = RoundRect(RectangleF.Inflate(fr, -4, -4), 12))
+            o.DrawPath(glow, deeper);
+        using (var edge = new Pen(Color.FromArgb(80, Shade(c, -0.6f)), 1f))
+            o.DrawPath(edge, front);
+        return bmp;
+    }
+
+    // Lens effect for a rounded slab of glass: near its edges the content behind is sampled
+    // from further inside, so it looks magnified and bent, like light through a curved rim.
+    static Bitmap Refract(Bitmap src, RectangleF area, float bevel, float strength)
+    {
+        int w = src.Width, h = src.Height;
+        var rect = new Rectangle(0, 0, w, h);
+        var input = new int[w * h];
+        var data = src.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            for (int y = 0; y < h; y++)
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0 + y * data.Stride, input, y * w, w);
+        }
+        finally { src.UnlockBits(data); }
+
+        var output = (int[])input.Clone();
+        int x0 = Math.Max(0, (int)area.Left), x1 = Math.Min(w, (int)Math.Ceiling(area.Right));
+        int y0 = Math.Max(0, (int)area.Top), y1 = Math.Min(h, (int)Math.Ceiling(area.Bottom));
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                float px = x + 0.5f, py = y + 0.5f;
+                // How deep into each edge's curve this pixel is (1 at the edge, 0 past the bevel).
+                float l = Curve((px - area.Left) / bevel), r = Curve((area.Right - px) / bevel);
+                float t = Curve((py - area.Top) / bevel), b = Curve((area.Bottom - py) / bevel);
+                float sx = px + (l - r) * strength, sy = py + (t - b) * strength;
+                output[y * w + x] = Sample(input, w, h, sx - 0.5f, sy - 0.5f);
+            }
+
+        var dst = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        var outData = dst.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            for (int y = 0; y < h; y++)
+                System.Runtime.InteropServices.Marshal.Copy(output, y * w, outData.Scan0 + y * outData.Stride, w);
+        }
+        finally { dst.UnlockBits(outData); }
+        return dst;
+
+        static float Curve(float d) => d >= 1 ? 0 : (1 - Math.Max(d, 0)) * (1 - Math.Max(d, 0));
+    }
+
+    // Bilinear sample with edge clamping, per channel.
+    static int Sample(int[] px, int w, int h, float x, float y)
+    {
+        x = Math.Clamp(x, 0, w - 1.001f);
+        y = Math.Clamp(y, 0, h - 1.001f);
+        int ix = (int)x, iy = (int)y;
+        float fx = x - ix, fy = y - iy;
+        int a = px[iy * w + ix], b = px[iy * w + ix + 1], c = px[(iy + 1) * w + ix], d = px[(iy + 1) * w + ix + 1];
+        int result = 0;
+        for (int shift = 0; shift < 32; shift += 8)
+        {
+            float top = ((a >> shift) & 255) * (1 - fx) + ((b >> shift) & 255) * fx;
+            float bottom = ((c >> shift) & 255) * (1 - fx) + ((d >> shift) & 255) * fx;
+            result |= ((int)(top * (1 - fy) + bottom * fy + 0.5f) & 255) << shift;
+        }
+        return result;
+    }
+
+    static Graphics Canvas(Bitmap bmp, float scale)
+    {
+        var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.CompositingQuality = CompositingQuality.HighQuality;
+        if (scale != 1) g.ScaleTransform(scale, scale);
+        return g;
+    }
+
+    // Cheap, smooth blur: shrink the image a lot, then scale it back up with bicubic filtering.
+    static Bitmap Blur(Bitmap src)
+    {
+        int small = Math.Max(6, src.Width / 14);
+        using var tiny = new Bitmap(small, small, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(tiny))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(src, 0, 0, small, small);
+        }
+        var big = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(big))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.DrawImage(tiny, new Rectangle(0, 0, src.Width, src.Height), 0, 0, small, small, GraphicsUnit.Pixel);
+        }
+        return big;
+    }
 
     static Bitmap DrawAppFolder(int size) =>
         Draw(size, Color.FromArgb(0x55, 0x5A, 0x66), (r, _) =>
@@ -134,40 +387,10 @@ static class IconMaker
             g.FillPath(b, body);
         }
 
-        bool hasFiles = previews is { Count: > 0 };
         float top = 78;
         int frontAlpha = 255;
-        if (hasFiles)
-        {
-            // The front flap drops lower (and lets a little through) so the files are what you see.
-            switch (style)
-            {
-                case PreviewStyle.Card:
-                    DrawCard(g, previews![0], new RectangleF(30, 50, 196, 132), 0);
-                    top = 142; frontAlpha = 240;
-                    break;
-                case PreviewStyle.Fan:
-                    var slots = new[] { (x: 98f, y: 112f, a: -9f), (x: 158f, y: 112f, a: 9f), (x: 128f, y: 104f, a: 0f) };
-                    var shown = previews!.Take(3).Reverse().ToList(); // newest drawn last, so on top
-                    for (int i = 0; i < shown.Count; i++)
-                    {
-                        var (x, y, a) = shown.Count == 1 ? slots[2] : slots[3 - shown.Count + i];
-                        DrawCard(g, shown[i], new RectangleF(x - 70, y - 50, 140, 100), a);
-                    }
-                    top = 146; frontAlpha = 240;
-                    break;
-                case PreviewStyle.Window:
-                    using (var body = RoundRect(new RectangleF(22, 52, 212, 160), 10))
-                    {
-                        var state = g.Save();
-                        g.SetClip(body);
-                        DrawCover(g, previews![0].Image, new RectangleF(22, 52, 212, 160));
-                        g.Restore(state);
-                    }
-                    top = 160; frontAlpha = 225;
-                    break;
-            }
-        }
+        if (previews is { Count: > 0 })
+            (top, frontAlpha) = DrawContents(g, previews, style);
 
         var fr = new RectangleF(16, top, 224, 214 - top);
         using (var fb = front(RectangleF.Inflate(fr, 1, 1), frontAlpha))
@@ -176,6 +399,38 @@ static class IconMaker
         using (var hl = new Pen(Color.FromArgb(70, 255, 255, 255), 3f))
             g.DrawLine(hl, 30, top + 2.5f, 226, top + 2.5f);
         return bmp;
+    }
+
+    // Draws the file previews between the back and front panels. Returns where the front
+    // panel starts (it drops lower so the files are what you see) and how opaque it is.
+    static (float top, int frontAlpha) DrawContents(Graphics g, IReadOnlyList<Preview> previews, PreviewStyle style)
+    {
+        switch (style)
+        {
+            case PreviewStyle.Card:
+                DrawCard(g, previews[0], new RectangleF(30, 50, 196, 132), 0);
+                return (142, 240);
+            case PreviewStyle.Fan:
+                var slots = new[] { (x: 98f, y: 112f, a: -9f), (x: 158f, y: 112f, a: 9f), (x: 128f, y: 104f, a: 0f) };
+                var shown = previews.Take(3).Reverse().ToList(); // newest drawn last, so on top
+                for (int i = 0; i < shown.Count; i++)
+                {
+                    var (x, y, a) = shown.Count == 1 ? slots[2] : slots[3 - shown.Count + i];
+                    DrawCard(g, shown[i], new RectangleF(x - 70, y - 50, 140, 100), a);
+                }
+                return (146, 240);
+            case PreviewStyle.Window:
+                using (var body = RoundRect(new RectangleF(22, 52, 212, 160), 10))
+                {
+                    var state = g.Save();
+                    g.SetClip(body);
+                    DrawCover(g, previews[0].Image, new RectangleF(22, 52, 212, 160));
+                    g.Restore(state);
+                }
+                return (160, 225);
+            default:
+                return (78, 255);
+        }
     }
 
     // One file as a white-framed photo card (or its type icon on paper), rotated around its centre.

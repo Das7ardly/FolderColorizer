@@ -19,19 +19,31 @@ sealed class FolderWatcher : IDisposable
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
         };
-        listWatcher.Changed += (_, _) => ui.BeginInvoke(Sync);
-        listWatcher.Created += (_, _) => ui.BeginInvoke(Sync);
+        listWatcher.Changed += (_, _) => Post(Sync);
+        listWatcher.Created += (_, _) => Post(Sync);
         listWatcher.EnableRaisingEvents = true;
 
         Sync();
         // Catch up on anything that changed while the tray wasn't running, and clear icons
-        // that earlier versions or interrupted changes left behind.
-        foreach (var folder in watchers.Keys.ToArray())
+        // that earlier versions or interrupted changes left behind (off the UI thread).
+        var folders = watchers.Keys.ToArray();
+        StaWorker.Run(() =>
         {
-            try { FolderIcon.CleanUpIcons(folder); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            foreach (var folder in folders)
+            {
+                try { FolderIcon.CleanUpIcons(folder); }
+                catch (Exception) { } // one odd folder must not stop the tray
+            }
+        });
+        foreach (var folder in folders)
             Schedule(folder);
-        }
+    }
+
+    // Marshals to the tray's UI thread; quietly does nothing while the tray is shutting down.
+    void Post(Action action)
+    {
+        try { if (ui.IsHandleCreated && !ui.IsDisposed) ui.BeginInvoke(action); }
+        catch (InvalidOperationException) { }
     }
 
     void Sync()
@@ -58,12 +70,19 @@ sealed class FolderWatcher : IDisposable
                 {
                     // Our own desktop.ini writes would otherwise trigger an endless loop.
                     if (!string.Equals(e.Name, "desktop.ini", StringComparison.OrdinalIgnoreCase))
-                        ui.BeginInvoke(() => Schedule(folder));
+                        Post(() => Schedule(folder));
                 };
                 w.Created += onChange;
                 w.Deleted += onChange;
                 w.Changed += onChange;
                 w.Renamed += (s, e) => onChange(s!, e);
+                // Buffer overflow, network drop, folder deleted: start over with a fresh watcher.
+                w.Error += (_, _) => Post(() =>
+                {
+                    if (watchers.Remove(folder, out var broken)) broken.Dispose();
+                    Sync();
+                    Schedule(folder);
+                });
                 w.EnableRaisingEvents = true;
                 watchers[folder] = w;
             }
@@ -90,15 +109,16 @@ sealed class FolderWatcher : IDisposable
         timer.Start();
     }
 
-    static void Refresh(string folder)
+    // Off the UI thread (thumbnails can be slow); any failure just leaves the old icon.
+    static void Refresh(string folder) => StaWorker.Run(() =>
     {
         try
         {
             if (!FolderIcon.Update(folder))
                 FolderList.Remove(folder);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-    }
+        catch (Exception) { }
+    });
 
     public void Dispose()
     {

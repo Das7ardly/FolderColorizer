@@ -2,7 +2,7 @@
 ; Build: dotnet publish (self-contained, see build-installer.ps1), then ISCC installer.iss
 
 #define AppName "Folder Colorizer"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define AppExe "FolderColorizer.exe"
 
 [Setup]
@@ -64,13 +64,20 @@ function CloseHandle(Handle: THandle): Boolean;
 procedure StopBackgroundApp();
 var
   Handle: THandle;
+  I: Integer;
 begin
   Handle := OpenEvent(EVENT_MODIFY_STATE, False, 'FolderColorizer.Quit.v1');
   if Handle <> 0 then
   begin
     SetEvent(Handle);
     CloseHandle(Handle);
-    Sleep(1500);
+    // Wait (up to 10 s) until it has really exited and released the exe.
+    for I := 1 to 50 do
+    begin
+      if not CheckForMutexes('FolderColorizer.Tray.v1') then Break;
+      Sleep(200);
+    end;
+    Sleep(300);
   end;
 end;
 

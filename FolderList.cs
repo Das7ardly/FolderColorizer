@@ -36,8 +36,10 @@ static class FolderList
     {
         using var mutex = new Mutex(false, "FolderColorizer.List.v1");
         bool owned;
-        try { owned = mutex.WaitOne(5000); }
+        try { owned = mutex.WaitOne(15000); }
         catch (AbandonedMutexException) { owned = true; }
+        // A read-modify-write without the lock could drop another process's entry.
+        if (!owned) throw new IOException("The list of colored folders is busy.");
         try { return body(); }
         finally { if (owned) mutex.ReleaseMutex(); }
     }

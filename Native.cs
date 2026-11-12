@@ -36,13 +36,14 @@ static class Native
     // Sets (or with null, clears) a folder's icon through the call Explorer's own "Change Icon"
     // uses. Writing desktop.ini by hand works on disk, but Explorer, and the desktop especially,
     // keeps showing what it cached for the folder; this call makes every window drop it.
-    public static void SetFolderIcon(string folder, string? icon)
+    public static void SetFolderIcon(string folder, string? icon, int index = 0)
     {
         var s = new SHFOLDERCUSTOMSETTINGS
         {
             dwSize = Marshal.SizeOf<SHFOLDERCUSTOMSETTINGS>(),
             dwMask = FCSM_ICONFILE,
             pszIconFile = icon,
+            iIconIndex = index,
         };
         int hr = SHGetSetFolderCustomSettings(ref s, folder, FCS_FORCEWRITE);
         if (hr < 0)

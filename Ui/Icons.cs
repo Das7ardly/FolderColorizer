@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace FolderColorizer.Ui;
 
-enum IconKind { None, Palette, List, Gear, Info, Folder, Open, Reset, Check, Drop, Brush, Broom }
+enum IconKind { None, Palette, List, Gear, Info, Folder, Open, Reset, Check, Drop, Brush, Broom, Stack, Stop }
 
 // Small line icons drawn in code, on a 24x24 grid scaled into the target rectangle.
 static class Icons
@@ -79,6 +79,19 @@ static class Icons
             case IconKind.Brush:
                 g.DrawEllipse(pen, 4, 4, 16, 16);
                 g.FillEllipse(fill, 8, 8, 8, 8);
+                break;
+            case IconKind.Stack:
+                // Two folders, one behind the other.
+                g.DrawLines(pen, new PointF[] { new(7, 6), new(7, 4.5f), new(11, 4.5f), new(12.5f, 6), new(20.5f, 6), new(20.5f, 14) });
+                using (var p = new GraphicsPath())
+                {
+                    p.AddLines(new PointF[] { new(3.5f, 19.5f), new(3.5f, 9), new(8.5f, 9), new(10.3f, 11), new(17, 11), new(17, 19.5f) });
+                    p.CloseFigure();
+                    g.DrawPath(pen, p);
+                }
+                break;
+            case IconKind.Stop:
+                using (var p = Theme.Round(new RectangleF(6, 6, 12, 12), 2.5f)) g.DrawPath(pen, p);
                 break;
             case IconKind.Broom:
                 g.DrawLine(pen, 17, 3.5f, 11.5f, 11);

@@ -12,21 +12,25 @@ Get `FolderColorizer-Setup-x.y.z.exe` from the [latest release](../../releases/l
 - Installs for your user only, with no admin prompt.
 - The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
 
-## Three ways to color a folder
+## Ways to color folders
 
 1. Right-click a folder, then **Folder color** (on Windows 11 it's under **Show more options**, or you can turn on the full menu in Settings).
 2. Select folders in File Explorer and press **Ctrl+Shift+F**. A small picker opens; press **1** to **0** for a color, **C** for a custom color, **R** to restore.
 3. Open **Folder Colorizer** from the Start menu, then drop a folder on the window or browse to one. You see the exact icon before you apply it.
+4. **Color many folders** colors every folder inside a folder that has no color yet, optionally including folders inside subfolders. It shows what will change first, leaves folders with their own icon (set by Windows or another app) alone, and has an Undo.
 
-12 colors are built in, and any custom color works too. **Restore default** puts the normal Windows folder back.
+![Color many folders](docs/color-many-folders.png)
 
-## File previews
+12 colors are built in, and any custom color works too. **Restore default** puts the folder's previous icon back, including the special icons of folders like Documents.
 
-Colored folders can show the newest photos, videos and files inside them. Pick the look in Settings:
+## Looks
 
-![Preview styles](docs/preview-styles.png)
+Every folder can have its own look, and Settings holds the default for new colors.
 
-**Window** (picture fills the folder), **Card**, **Fan** (up to three files), or **Plain** (color only). The background app redraws a folder's icon a moment after its files change.
+- **Material:** **Classic** (flat, like Windows 11), **Frosted** (a frosted-glass front that blurs what's behind it) or **Liquid glass** (clear, see-through glass in the style of macOS 26, which bends what's behind it at its edges and has bright rims).
+- **File previews:** **Window** (the newest picture fills the folder), **Card**, **Fan** (up to three files) or **Plain** (color only). The background app redraws a folder's icon a moment after its files change.
+
+![Looks](docs/preview-styles.png)
 
 ![Settings](docs/settings.png)
 

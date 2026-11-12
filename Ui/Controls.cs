@@ -198,14 +198,116 @@ class Card : Panel
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        e.Graphics.Clear(Parent?.BackColor ?? Theme.Bg);
-        Theme.Smooth(e.Graphics);
+        var g = e.Graphics;
+        Backdrop.Paint(this, g, blur: false); // what shows around the rounded corners
+        Theme.Smooth(g);
         float s = DeviceDpi / 96f;
         var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-        Theme.FillRound(e.Graphics, Highlight ? Theme.Muted : Theme.Card, r, 12 * s);
-        Theme.StrokeRound(e.Graphics, Highlight ? Theme.Accent : Theme.BorderSoft, r, 12 * s, Dashed ? 1.5f * s : 1f,
-            Dashed ? System.Drawing.Drawing2D.DashStyle.Dash : System.Drawing.Drawing2D.DashStyle.Solid);
+        Backdrop.PaintGlass(this, g, r, 14 * s,
+            Highlight ? Color.FromArgb(150, Theme.Muted) : Color.FromArgb(118, Theme.Card),
+            Highlight ? Theme.Accent : Color.FromArgb(34, 255, 255, 255));
+        if (Dashed)
+            Theme.StrokeRound(g, Highlight ? Theme.Accent : Color.FromArgb(90, Theme.Border), RectangleF.Inflate(r, -6 * s, -6 * s), 10 * s,
+                1.4f * s, System.Drawing.Drawing2D.DashStyle.Dash);
     }
+
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        Invalidate(); // the backdrop behind it moved
+    }
+}
+
+// A row of mutually exclusive options (segmented control). Arrow keys move the choice.
+sealed class Segmented : ThemedControl
+{
+    readonly string[] items;
+    int selected, hover = -1;
+    public event EventHandler? SelectedChanged;
+
+    public Segmented(params string[] items)
+    {
+        this.items = items;
+        Cursor = Cursors.Hand;
+        TabStop = true;
+    }
+
+    public int SelectedIndex
+    {
+        get => selected;
+        set { value = Math.Clamp(value, 0, items.Length - 1); if (value == selected) return; selected = value; Invalidate(); SelectedChanged?.Invoke(this, EventArgs.Empty); }
+    }
+
+    public void SetQuietly(int index) { selected = Math.Clamp(index, 0, items.Length - 1); Invalidate(); }
+
+    int SegmentWidth => items.Max(t => TextRenderer.MeasureText(t, Theme.Body).Width) + (int)(26 * S);
+    public override Size GetPreferredSize(Size proposed) => new(SegmentWidth * items.Length + (int)(8 * S), (int)(36 * S));
+    RectangleF Segment(int i) => new(4 * S + i * SegmentWidth, 4 * S, SegmentWidth, Height - 8 * S);
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        int h = Enumerable.Range(0, items.Length).FirstOrDefault(i => Segment(i).Contains(e.Location), -1);
+        if (h != hover) { hover = h; Invalidate(); }
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e) { hover = -1; base.OnMouseLeave(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { if (hover >= 0) { Focus(); SelectedIndex = hover; } base.OnMouseUp(e); }
+    protected override bool IsInputKey(Keys keyData) => keyData is Keys.Left or Keys.Right || base.IsInputKey(keyData);
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Left) { SelectedIndex--; e.Handled = true; }
+        if (e.KeyCode == Keys.Right) { SelectedIndex++; e.Handled = true; }
+        base.OnKeyDown(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        Theme.Smooth(g);
+        var outer = new RectangleF(0.5f, 0.5f, Width - 1, Height - 1);
+        Theme.FillRound(g, Color.FromArgb(120, Theme.Bg), outer, 10 * S);
+        Theme.StrokeRound(g, Color.FromArgb(30, 255, 255, 255), outer, 10 * S);
+        for (int i = 0; i < items.Length; i++)
+        {
+            var r = Segment(i);
+            if (i == selected)
+            {
+                Theme.FillRound(g, Color.FromArgb(220, Theme.Hover), r, 7 * S);
+                Theme.StrokeRound(g, Color.FromArgb(60, 255, 255, 255), r, 7 * S);
+            }
+            else if (i == hover)
+                Theme.FillRound(g, Color.FromArgb(90, Theme.Muted), r, 7 * S);
+            TextRenderer.DrawText(g, items[i], i == selected ? Theme.BodyStrong : Theme.Body, Rectangle.Round(r),
+                i == selected ? Theme.Text : Theme.TextMuted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        }
+        if (Focused && ShowFocusCues) Theme.StrokeRound(g, Theme.Ring, Segment(selected), 7 * S, 1.5f * S);
+    }
+}
+
+// A panel that shows the window backdrop (content areas, scrolling lists).
+class BackdropPanel : Panel
+{
+    public BackdropPanel()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        BackColor = Theme.Bg;
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) => Backdrop.Paint(this, e.Graphics, blur: false);
+}
+
+sealed class BackdropFlow : FlowLayoutPanel
+{
+    public BackdropFlow()
+    {
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        BackColor = Theme.Bg;
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) => Backdrop.Paint(this, e.Graphics, blur: false);
+    // The backdrop stays put while the rows scroll over it.
+    protected override void OnScroll(ScrollEventArgs se) { base.OnScroll(se); Invalidate(true); }
+    protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); Invalidate(true); }
 }
 
 // The palette: one circle per colour, plus a ring around the chosen one.

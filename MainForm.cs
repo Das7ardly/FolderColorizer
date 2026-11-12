@@ -7,8 +7,20 @@ namespace FolderColorizer;
 // The settings window: a sidebar with the pages, and the current page on the right.
 sealed class MainForm : Form
 {
-    readonly Panel sidebar = new() { Dock = DockStyle.Left, BackColor = Theme.Sidebar };
-    readonly Panel content = new() { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+    readonly GlassSidebar sidebar = new() { Dock = DockStyle.Left };
+    readonly BackdropPanel content = new() { Dock = DockStyle.Fill };
+
+    // The sidebar is a glass panel floating over the backdrop, inset from the window edges.
+    sealed class GlassSidebar : BackdropPanel
+    {
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            base.OnPaintBackground(e);
+            float s = DeviceDpi / 96f;
+            Backdrop.PaintGlass(this, e.Graphics, new RectangleF(10 * s, 10 * s, Width - 14 * s, Height - 20 * s), 16 * s,
+                Color.FromArgb(150, Theme.Sidebar), Color.FromArgb(34, 255, 255, 255));
+        }
+    }
     readonly List<(NavButton button, Page page)> pages = [];
     readonly ColorPage colorPage = new();
 
@@ -25,10 +37,11 @@ sealed class MainForm : Form
         ClientSize = new Size((int)(1040 * s), (int)(680 * s));
         MinimumSize = new Size((int)(980 * s), (int)(640 * s));
         sidebar.Width = (int)(232 * s);
-        sidebar.Padding = new Padding((int)(14 * s), (int)(84 * s), (int)(14 * s), (int)(14 * s));
+        sidebar.Padding = new Padding((int)(20 * s), (int)(88 * s), (int)(14 * s), (int)(14 * s));
         sidebar.Paint += PaintBrand;
 
         Add("Color a folder", IconKind.Palette, colorPage);
+        Add("Color many folders", IconKind.Stack, new BulkPage());
         Add("Colored folders", IconKind.List, new FoldersPage(f => { ShowPage(0); colorPage.LoadFolder(f); }, () => ShowPage(0)));
         Add("Settings", IconKind.Gear, new SettingsPage());
         Add("About", IconKind.Info, new AboutPage());
@@ -67,12 +80,16 @@ sealed class MainForm : Form
         var g = e.Graphics;
         Theme.Smooth(g);
         float s = DeviceDpi / 96f;
-        using (var logo = IconMaker.DrawAppIcon(64))
-            g.DrawImage(logo, 20 * s, 22 * s, 34 * s, 34 * s);
-        TextRenderer.DrawText(g, "Folder", Theme.BodyStrong, new Point((int)(62 * s), (int)(20 * s)), Theme.Text);
-        TextRenderer.DrawText(g, "Colorizer", Theme.Body, new Point((int)(62 * s), (int)(38 * s)), Theme.TextMuted);
-        using var line = new Pen(Theme.BorderSoft);
-        g.DrawLine(line, sidebar.Width - 1, 0, sidebar.Width - 1, sidebar.Height);
+        using (var logo = IconMaker.DrawFolder(64, Theme.Hex("2F7DF6"), material: FolderMaterial.Liquid))
+            g.DrawImage(logo, 26 * s, 28 * s, 36 * s, 36 * s);
+        TextRenderer.DrawText(g, "Folder", Theme.BodyStrong, new Point((int)(70 * s), (int)(27 * s)), Theme.Text);
+        TextRenderer.DrawText(g, "Colorizer", Theme.Body, new Point((int)(70 * s), (int)(45 * s)), Theme.TextMuted);
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        Invalidate(true); // the backdrop is redrawn for the new size
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -102,8 +119,15 @@ sealed class MainForm : Form
             }
             bmp.Save(Path.Combine(dir, name + ".png"), ImageFormat.Png);
         }
-        string[] names = ["1-color", "2-folders", "3-settings", "4-about"];
+        string[] names = ["1-color", "2-bulk", "3-folders", "4-settings", "5-about"];
         for (int i = 0; i < names.Length; i++) { form.ShowPage(i); Shot(names[i]); }
+        if (folder != null && Path.GetDirectoryName(folder) is { } parent)
+        {
+            form.ShowPage(1);
+            ((BulkPage)form.pages[1].page).SetRoot(parent);
+            for (int i = 0; i < 100; i++) { Application.DoEvents(); Thread.Sleep(50); } // let the scan finish
+            Shot("2-bulk-loaded");
+        }
         if (folder != null)
         {
             form.ShowPage(0);

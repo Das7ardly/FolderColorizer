@@ -3,12 +3,11 @@ namespace FolderColorizer.Ui;
 // Every folder this app has colored, with quick actions.
 sealed class FoldersPage : Page
 {
-    readonly FlowLayoutPanel list = new()
+    readonly BackdropFlow list = new()
     {
         FlowDirection = FlowDirection.TopDown,
         WrapContents = false,
         AutoScroll = true,
-        BackColor = Theme.Bg,
     };
     readonly Card emptyCard = new();
     readonly Label emptyTitle = UiText.Make("No colored folders yet", Theme.Heading, Theme.Text);
@@ -104,7 +103,14 @@ sealed class FolderRow : Card
     readonly FlatButton open = new("Open", ButtonKind.Ghost, IconKind.Open);
     readonly FlatButton restore = new("Restore", ButtonKind.Ghost, IconKind.Reset);
     readonly Color color;
+    readonly ToolTip tip = new();
     public event Action? Change, Restore;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) tip.Dispose();
+        base.Dispose(disposing);
+    }
 
     public FolderRow(string folder)
     {
@@ -112,6 +118,8 @@ sealed class FolderRow : Card
         color = FolderIcon.ColorOf(folder) ?? Color.Gray;
         name = UiText.Make(Path.GetFileName(folder), Theme.BodyStrong, Theme.Text);
         path = UiText.Make(Path.GetDirectoryName(folder) ?? folder, Theme.Small, Theme.TextMuted);
+        tip.SetToolTip(path, folder);
+        tip.SetToolTip(name, folder);
         try
         {
             if (FolderIcon.IconOf(folder) is { } file && File.Exists(file))
@@ -148,9 +156,11 @@ sealed class FolderRow : Card
         open.Location = new Point(restore.Left - open.Width - (int)(4 * s), restore.Top);
         change.Location = new Point(open.Left - change.Width - (int)(8 * s), restore.Top);
         int textX = icon.Right + (int)(14 * s), textW = Math.Max(60, change.Left - textX - (int)(30 * s));
-        name.MaximumSize = new Size(textW, 0);
-        path.MaximumSize = new Size(textW + (int)(20 * s), 0);
-        name.Location = new Point(textX, Height / 2 - name.Height - (int)(1 * s));
-        path.Location = new Point(textX, Height / 2 + (int)(2 * s));
+        // One line each, cut with "…" (the full path is in the tooltip).
+        foreach (var l in new[] { name, path }) l.AutoSize = false;
+        name.Size = new Size(Math.Min(textW, TextRenderer.MeasureText(name.Text, name.Font).Width + 4), name.Font.Height + 4);
+        path.Size = new Size(textW + (int)(20 * s), path.Font.Height + 4);
+        name.Location = new Point(textX, Height / 2 - name.Height);
+        path.Location = new Point(textX, Height / 2 + (int)(1 * s));
     }
 }

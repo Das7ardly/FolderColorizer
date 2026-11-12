@@ -39,6 +39,13 @@ static class Program
                 case "--appicon":
                     IconMaker.WriteAppIcon(args[1]);
                     break;
+                case "--bulk":
+                    // --bulk <folder> <hex> [--deep]: what "Color many folders" does, for scripts and tests.
+                    if (BulkScan.Refusal(args[1], args.Contains("--deep")) is { } refusal)
+                        throw new InvalidOperationException(refusal);
+                    foreach (var f in BulkScan.Run(args[1], args.Contains("--deep"), recolor: false).Targets)
+                        FolderIcon.Apply(f, Palette.FromHex(args[2]));
+                    break;
                 case "--screenshots":
                     try { MainForm.SaveScreenshots(args[1], args.Length > 2 ? args[2] : null); }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(args[1], "error.txt"), ex.ToString()); return 1; }

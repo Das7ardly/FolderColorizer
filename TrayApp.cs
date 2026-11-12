@@ -49,7 +49,8 @@ sealed class TrayContext : ApplicationContext
     {
         string[] folders;
         try { folders = ExplorerSelection.Get(explorer); }
-        catch (COMException) { return; }
+        // Views like Home or Gallery aren't normal folder views and can fail in several ways.
+        catch (Exception) { return; }
         if (folders.Length == 0) return;
 
         open?.Close();

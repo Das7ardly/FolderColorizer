@@ -10,8 +10,11 @@ sealed class SettingsPage : Page
     readonly FlatButton restartExplorer = new("Restart File Explorer", ButtonKind.Ghost, IconKind.Reset);
 
     readonly Card previewsCard = new();
-    readonly Label previewsTitle = UiText.Make("File previews", Theme.Heading, Theme.Text);
-    readonly Label previewsText = UiText.Make("How a colored folder shows the newest pictures and files inside it.", Theme.Small, Theme.TextMuted);
+    readonly Label previewsTitle = UiText.Make("Default look", Theme.Heading, Theme.Text);
+    readonly Label previewsText = UiText.Make("Used for new colors from the right-click menu and the shortcut. You can still pick a look per folder.", Theme.Small, Theme.TextMuted);
+    readonly Segmented materialChoice = new("Classic", "Frosted", "Liquid glass");
+    static readonly FolderMaterial[] Materials = [FolderMaterial.Classic, FolderMaterial.Glass, FolderMaterial.Liquid];
+    Demo? demo;
     readonly List<(ChoiceTile tile, PreviewStyle style)> tiles = [];
     readonly FlatButton redrawButton = new("Update colored folders", ButtonKind.Secondary, IconKind.Reset);
     readonly Label status = UiText.Make("", Theme.Small, Theme.TextMuted);
@@ -33,15 +36,24 @@ sealed class SettingsPage : Page
                 Setup.RestartExplorer();
         };
 
-        previewsCard.Controls.AddRange([previewsTitle, previewsText, redrawButton, status]);
-        using var demo = DemoPreviews();
+        previewsCard.Controls.AddRange([previewsTitle, previewsText, materialChoice, redrawButton, status]);
+        demo = DemoPreviews();
         foreach (var (label, style) in new[] { ("Window", PreviewStyle.Window), ("Card", PreviewStyle.Card), ("Fan", PreviewStyle.Fan), ("Plain", PreviewStyle.Plain) })
         {
-            var tile = new ChoiceTile(label) { Picture = IconMaker.DrawFolder(128, Palette.Colors[4].Color, demo.Items, style) };
+            var tile = new ChoiceTile(label);
             tile.Click += (_, _) => ChooseStyle(style);
             tiles.Add((tile, style));
             previewsCard.Controls.Add(tile);
         }
+        materialChoice.SelectedChanged += (_, _) =>
+        {
+            var settings = AppSettings.Load();
+            settings.Material = Materials[materialChoice.SelectedIndex];
+            settings.Save();
+            DrawTiles();
+            status.ForeColor = Theme.TextMuted;
+            status.Text = "New colors use this look. Update colored folders to redraw the ones you have.";
+        };
         redrawButton.Click += (_, _) => RedrawAll();
         Controls.AddRange([integration, previewsCard]);
         AutoScroll = true;
@@ -76,9 +88,23 @@ sealed class SettingsPage : Page
         integration.Controls.AddRange([t, d, toggle]);
     }
 
+    void DrawTiles()
+    {
+        var material = Materials[materialChoice.SelectedIndex];
+        foreach (var (tile, style) in tiles)
+        {
+            tile.Picture?.Dispose();
+            tile.Picture = IconMaker.DrawFolder(128, Palette.Colors[5].Color, demo!.Items, style, material);
+            tile.Invalidate();
+        }
+    }
+
     public override void Activate()
     {
-        var style = AppSettings.Load().PreviewStyle;
+        var settings = AppSettings.Load();
+        var style = settings.PreviewStyle;
+        materialChoice.SetQuietly(Array.IndexOf(Materials, settings.Material));
+        DrawTiles();
         foreach (var (tile, s) in tiles) tile.Selected = s == style;
         rows[0].toggle.SetQuietly(Setup.IsMenuOn);
         rows[1].toggle.SetQuietly(Setup.IsShortcutOn);
@@ -103,11 +129,12 @@ sealed class SettingsPage : Page
         redrawButton.Enabled = false;
         status.ForeColor = Theme.TextMuted;
         int done = 0, failed = 0;
+        var look = AppSettings.Load().DefaultLook;
         RunInBackground(() =>
         {
             foreach (var f in folders)
             {
-                try { FolderIcon.Redraw(f); } catch (Exception) { failed++; }
+                try { FolderIcon.Redraw(f, look); } catch (Exception) { failed++; }
                 done++;
                 BeginInvoke(() => status.Text = $"Updating {done} of {folders.Count}…");
             }
@@ -119,6 +146,12 @@ sealed class SettingsPage : Page
     }
 
     // A small landscape, so the style tiles show what file previews look like.
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) demo?.Dispose();
+        base.Dispose(disposing);
+    }
+
     sealed class Demo : IDisposable
     {
         public readonly List<Preview> Items = [];
@@ -166,10 +199,12 @@ sealed class SettingsPage : Page
         previewsCard.Width = w;
         previewsTitle.Location = new Point(x, (int)(18 * S));
         previewsText.Location = new Point(x, previewsTitle.Bottom + (int)(2 * S));
+        materialChoice.Size = materialChoice.GetPreferredSize(Size.Empty);
+        materialChoice.Location = new Point(x, previewsText.Bottom + (int)(12 * S));
         int tw = (int)(118 * S), th = (int)(132 * S), tx = x;
         foreach (var (tile, _) in tiles)
         {
-            tile.Bounds = new Rectangle(tx, previewsText.Bottom + (int)(14 * S), tw, th);
+            tile.Bounds = new Rectangle(tx, materialChoice.Bottom + (int)(10 * S), tw, th);
             tx += tw + (int)(12 * S);
         }
         redrawButton.Size = redrawButton.GetPreferredSize(Size.Empty);

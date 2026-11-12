@@ -21,7 +21,8 @@ sealed class PickerForm : Form
     public PickerForm(string[] folders)
     {
         this.folders = folders;
-        title = folders.Length == 1 ? Path.GetFileName(folders[0].TrimEnd('\\')) : $"{folders.Length} folders";
+        title = folders.Length != 1 ? $"{folders.Length} folders"
+            : Path.GetFileName(folders[0].TrimEnd('\\')) is { Length: > 0 } name ? name : folders[0]; // a drive root has no name
         dark = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
             ?.GetValue("AppsUseLightTheme") is int light && light == 0;
 
@@ -39,12 +40,13 @@ sealed class PickerForm : Form
 
         int pad = S(12), cell = S(50), header = S(30), footer = S(34);
         int y = pad + header;
+        var material = AppSettings.Load().Material; // swatches show the look new colors get
         for (int i = 0; i < Palette.Colors.Length; i++)
         {
             var c = Palette.Colors[i];
             var r = new Rectangle(pad + i % Cols * cell, y + i / Cols * cell, cell, cell);
             string? key = i < 10 ? ((i + 1) % 10).ToString() : null;
-            cells.Add(new Cell(r, c.Name, IconMaker.DrawFolder(S(32), c.Color), key, () => Apply(c.Color)));
+            cells.Add(new Cell(r, c.Name, IconMaker.DrawFolder(S(32), c.Color, material: material), key, () => Apply(c.Color)));
         }
         int rows = (Palette.Colors.Length + Cols - 1) / Cols;
         int fy = y + rows * cell + S(6);
@@ -186,25 +188,36 @@ sealed class PickerForm : Form
             Close();
     }
 
+    // The work runs on its own thread: the tray's UI thread also runs the keyboard hook,
+    // and Windows drops a hook whose thread stops responding.
     void ForEachFolder(Action<string> action)
     {
         busy = true;
         Hide();
+        var targets = folders;
         var errors = new List<string>();
-        foreach (var f in folders)
+        StaWorker.Run(() =>
         {
-            try { action(f); }
-            catch (Exception ex) { errors.Add($"{f}: {ex.Message}"); }
-        }
-        if (errors.Count > 0)
-            MessageBox.Show(string.Join("\n", errors), "Folder Colorizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            foreach (var f in targets)
+            {
+                try { action(f); }
+                catch (Exception ex) { errors.Add($"{f}: {ex.Message}"); }
+            }
+        }, _ =>
+        {
+            if (errors.Count > 0)
+                MessageBox.Show(string.Join("\n", errors), "Folder Colorizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        });
         Close();
     }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
             foreach (var c in cells) c.Image?.Dispose();
+            Font.Dispose();
+        }
         base.Dispose(disposing);
     }
 }

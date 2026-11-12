@@ -7,8 +7,10 @@ namespace FolderColorizer.Ui;
 // glass surfaces (cards, sidebar) paint a blurred copy of the part behind them, then a tint.
 static class Backdrop
 {
+    // Drawn once at this size and stretched to the window: it is all soft gradients, so scaling
+    // doesn't show, and resizing the window doesn't have to rebuild it.
+    static readonly Size RenderSize = new(1600, 1000);
     static Bitmap? sharp, blurred;
-    static Size size;
 
     // Paints the part of the window backdrop that lies behind control c.
     public static void Paint(Control c, Graphics g, bool blur)
@@ -19,22 +21,19 @@ static class Backdrop
             g.Clear(Theme.Bg);
             return;
         }
-        Ensure(form.ClientSize);
+        Ensure();
         var offset = form.PointToClient(c.PointToScreen(Point.Empty));
         var state = g.Save();
-        g.InterpolationMode = InterpolationMode.Low;
+        g.InterpolationMode = InterpolationMode.Bilinear;
         g.PixelOffsetMode = PixelOffsetMode.Half;
-        g.DrawImageUnscaled(blur ? blurred! : sharp!, -offset.X, -offset.Y);
+        g.DrawImage(blur ? blurred! : sharp!, new Rectangle(-offset.X, -offset.Y, form.ClientSize.Width, form.ClientSize.Height));
         g.Restore(state);
     }
 
-    public static void Invalidate() { sharp?.Dispose(); blurred?.Dispose(); sharp = blurred = null; size = Size.Empty; }
-
-    static void Ensure(Size s)
+    static void Ensure()
     {
-        if (sharp != null && s == size) return;
-        Invalidate();
-        size = s;
+        if (sharp != null) return;
+        var s = RenderSize;
         sharp = new Bitmap(s.Width, s.Height, PixelFormat.Format32bppPArgb);
         using (var g = Graphics.FromImage(sharp))
         {
@@ -47,7 +46,7 @@ static class Backdrop
             Glow(g, s, 0.05f, 0.20f, 0.35f, Theme.Hex("2F7DF6"), 45);
             Glow(g, s, 0.62f, 0.62f, 0.30f, Theme.Hex("E85CA8"), 22);
         }
-        blurred = BlurBig(sharp);
+        blurred = IconMaker.Blur(sharp, 24);
     }
 
     static void Glow(Graphics g, Size s, float cx, float cy, float radius, Color c, int alpha)
@@ -62,26 +61,6 @@ static class Backdrop
             SurroundColors = [Color.FromArgb(0, c)],
         };
         g.FillEllipse(brush, rect);
-    }
-
-    // Strong blur for the glass: shrink a lot, then scale back up smoothly.
-    static Bitmap BlurBig(Bitmap src)
-    {
-        int w = Math.Max(4, src.Width / 24), h = Math.Max(4, src.Height / 24);
-        using var tiny = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
-        using (var g = Graphics.FromImage(tiny))
-        {
-            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
-            g.DrawImage(src, 0, 0, w, h);
-        }
-        var big = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppPArgb);
-        using (var g = Graphics.FromImage(big))
-        {
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.Half;
-            g.DrawImage(tiny, new Rectangle(0, 0, src.Width, src.Height), 0, 0, w, h, GraphicsUnit.Pixel);
-        }
-        return big;
     }
 
     // Liquid-glass surface: the softened backdrop seen through a light tint, a hairline border

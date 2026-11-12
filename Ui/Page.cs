@@ -53,6 +53,13 @@ abstract class Page : UserControl
     protected void RunInBackground(Action work, Action<Exception?> done) =>
         StaWorker.Run(work, error => { if (!IsDisposed) done(error); });
 
+    // Progress updates from a background worker; ignored once the window is gone.
+    protected void PostToUi(Action a)
+    {
+        try { if (IsHandleCreated && !IsDisposed) BeginInvoke(a); }
+        catch (InvalidOperationException) { }
+    }
+
     protected void Report(Exception? error, string ok, Label status)
     {
         status.ForeColor = error == null ? Theme.Accent : Theme.Danger;

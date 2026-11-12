@@ -22,14 +22,11 @@ sealed class ColorPage : Page
     readonly FlatButton customButton = new("Custom color…", ButtonKind.Secondary, IconKind.Brush);
     readonly FlatButton restoreButton = new("Restore default", ButtonKind.Ghost, IconKind.Reset);
     readonly Label lookHeading = UiText.Make("Look", Theme.Heading, Theme.Text);
-    readonly Segmented materialChoice = new("Classic", "Frosted", "Liquid glass");
-    readonly Segmented styleChoice = new("Window", "Card", "Fan", "Plain");
+    readonly Segmented materialChoice = LookChoices.MaterialPicker();
+    readonly Segmented styleChoice = LookChoices.StylePicker();
     readonly Label styleHint = UiText.Make("", Theme.Small, Theme.TextMuted, wrap: true);
 
-    // Segment order -> enum values.
-    static readonly FolderMaterial[] Materials = [FolderMaterial.Classic, FolderMaterial.Glass, FolderMaterial.Liquid];
-    static readonly PreviewStyle[] Styles = [PreviewStyle.Window, PreviewStyle.Card, PreviewStyle.Fan, PreviewStyle.Plain];
-    Look SelectedLook => new(Styles[styleChoice.SelectedIndex], Materials[materialChoice.SelectedIndex]);
+    Look SelectedLook => new(LookChoices.StyleAt(styleChoice), LookChoices.MaterialAt(materialChoice));
     readonly FlatButton applyButton = new("Apply color", ButtonKind.Primary, IconKind.Check);
     readonly FlatButton anotherButton = new("Choose another folder", ButtonKind.Ghost, IconKind.Folder);
     readonly Label status = UiText.Make("", Theme.Small, Theme.Accent);
@@ -114,9 +111,7 @@ sealed class ColorPage : Page
         finally { Cursor = Cursors.Default; }
 
         // Start from the look the folder already has (or the default from Settings).
-        var look = FolderIcon.LookOf(folder);
-        materialChoice.SetQuietly(Array.IndexOf(Materials, look.Material));
-        styleChoice.SetQuietly(Array.IndexOf(Styles, look.Style));
+        LookChoices.Show(materialChoice, styleChoice, FolderIcon.LookOf(folder));
         UpdateHint();
         folderName.Text = Path.GetFileName(folder) is { Length: > 0 } name ? name : folder;
         folderPath.Text = folder;
@@ -134,7 +129,7 @@ sealed class ColorPage : Page
     static string NameOf(Color c) =>
         Palette.Colors.FirstOrDefault(p => p.Color.ToArgb() == c.ToArgb())?.Name ?? $"custom #{Palette.Hex(c).ToUpperInvariant()}";
 
-    void UpdateHint() => styleHint.Text = Styles[styleChoice.SelectedIndex] == PreviewStyle.Plain
+    void UpdateHint() => styleHint.Text = LookChoices.StyleAt(styleChoice) == PreviewStyle.Plain
         ? "Color only, no file previews."
         : previews.Count == 0
             ? "This folder has no files to preview, so it gets the plain color."

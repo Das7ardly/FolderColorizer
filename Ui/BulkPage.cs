@@ -18,20 +18,23 @@ sealed class BulkPage : Page
     readonly Label colorHeading = UiText.Make("Color and look", Theme.Heading, Theme.Text);
     readonly Label colorName = UiText.Make("", Theme.Body, Theme.TextMuted);
     readonly SwatchGrid swatches = new();
-    readonly Segmented materialChoice = new("Classic", "Frosted", "Liquid glass");
-    readonly Segmented styleChoice = new("Window", "Card", "Fan", "Plain");
+    readonly Segmented materialChoice = LookChoices.MaterialPicker();
+    readonly Segmented styleChoice = LookChoices.StylePicker();
+    readonly List<Preview> samples = LookChoices.SamplePictures(1);
     readonly ImageBox sample = new();
     readonly FlatButton applyButton = new("Color folders", ButtonKind.Primary, IconKind.Check);
     readonly FlatButton cancelButton = new("Stop", ButtonKind.Danger, IconKind.Stop);
     readonly FlatButton undoButton = new("Undo", ButtonKind.Ghost, IconKind.Reset);
     readonly Label status = UiText.Make("", Theme.Small, Theme.TextMuted, wrap: true);
 
-    static readonly FolderMaterial[] Materials = [FolderMaterial.Classic, FolderMaterial.Glass, FolderMaterial.Liquid];
-    static readonly PreviewStyle[] Styles = [PreviewStyle.Window, PreviewStyle.Card, PreviewStyle.Fan, PreviewStyle.Plain];
+    // What each folder of the last run looked like before, so Undo can put exactly that back:
+    // a previous color and look, or (null) Windows' own folder.
+    sealed record Before(string Folder, Color? Color, Look Look);
 
     string? root;
     BulkScan? scan;
-    List<string> lastRun = [];
+    int scanId; // only the newest scan's result is shown
+    List<Before> lastRun = [];
     volatile bool stop;
     bool busy;
 
@@ -61,9 +64,7 @@ sealed class BulkPage : Page
         cancelButton.Click += (_, _) => { stop = true; cancelButton.Enabled = false; };
         undoButton.Click += (_, _) => Undo();
 
-        var defaults = AppSettings.Load();
-        materialChoice.SetQuietly(Array.IndexOf(Materials, defaults.Material));
-        styleChoice.SetQuietly(Array.IndexOf(Styles, defaults.PreviewStyle));
+        LookChoices.Show(materialChoice, styleChoice, AppSettings.Load().DefaultLook);
         swatches.Select(Palette.Colors.First(c => c.Name == "Blue").Color);
         UpdateApply();
     }
@@ -84,6 +85,7 @@ sealed class BulkPage : Page
     void Rescan()
     {
         if (root == null || busy) return;
+        int id = ++scanId;
         scan = null;
         UpdateApply();
         if (BulkScan.Refusal(root, deepToggle.Checked) is { } refusal)
@@ -100,7 +102,7 @@ sealed class BulkPage : Page
         BulkScan? result = null;
         RunInBackground(() => result = BulkScan.Run(r, deep, recolor), error =>
         {
-            if (r != root) return; // another folder was chosen meanwhile
+            if (id != scanId) return; // the folder or the options changed meanwhile
             if (error != null) { Report(error, "", summary); return; }
             scan = result!;
             summary.ForeColor = Theme.TextMuted;
@@ -127,44 +129,20 @@ sealed class BulkPage : Page
         PerformLayout();
     }
 
+    // Shows the chosen color and look on a sample picture standing in for "the files inside".
     void DrawSample()
     {
         if (swatches.SelectedColor is not { } c) return;
-        var style = Styles[styleChoice.SelectedIndex];
-        using var demo = SampleFiles();
-        sample.Image = IconMaker.DrawFolder(128, c, style == PreviewStyle.Plain ? null : demo.Items, style, Materials[materialChoice.SelectedIndex]);
-    }
-
-    sealed class Demo : IDisposable
-    {
-        public readonly List<Preview> Items = [];
-        public void Dispose() => Items.ForEach(p => p.Dispose());
-    }
-
-    // A neutral picture standing in for "the files inside".
-    static Demo SampleFiles()
-    {
-        var bmp = new Bitmap(320, 240);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            Theme.Smooth(g);
-            using (var b = new System.Drawing.Drawing2D.LinearGradientBrush(new Rectangle(0, 0, 320, 240), Theme.Hex("7DD3FC"), Color.White, 90f))
-                g.FillRectangle(b, 0, 0, 320, 240);
-            using (var b = new SolidBrush(Theme.Hex("15803D"))) g.FillEllipse(b, -60, 140, 300, 200);
-            using (var b = new SolidBrush(Theme.Hex("166534"))) g.FillEllipse(b, 120, 160, 300, 200);
-            g.FillEllipse(Brushes.LemonChiffon, 220, 40, 50, 50);
-        }
-        var demo = new Demo();
-        demo.Items.Add(new Preview(bmp, true));
-        return demo;
+        var style = LookChoices.StyleAt(styleChoice);
+        sample.Image = IconMaker.DrawFolder(128, c, style == PreviewStyle.Plain ? null : samples, style, LookChoices.MaterialAt(materialChoice));
     }
 
     void Run()
     {
         if (scan is not { Targets.Count: > 0 } || swatches.SelectedColor is not { } color) return;
         var targets = scan.Targets.ToList();
-        var look = new Look(Styles[styleChoice.SelectedIndex], Materials[materialChoice.SelectedIndex]);
-        var done = new List<string>();
+        var look = new Look(LookChoices.StyleAt(styleChoice), LookChoices.MaterialAt(materialChoice));
+        var done = new List<Before>();
         int failed = 0;
         stop = false;
         SetBusy(true);
@@ -173,10 +151,11 @@ sealed class BulkPage : Page
             foreach (var f in targets)
             {
                 if (stop) break;
-                try { FolderIcon.Apply(f, color, look); lock (done) done.Add(f); }
+                var before = new Before(f, FolderIcon.ColorOf(f), FolderIcon.LookOf(f));
+                try { FolderIcon.Apply(f, color, look); done.Add(before); }
                 catch (Exception) { failed++; }
-                int count = done.Count;
-                BeginInvokeSafe(() => status.Text = $"Coloring {count + failed} of {targets.Count}…");
+                int count = done.Count + failed;
+                PostToUi(() => status.Text = $"Coloring {count} of {targets.Count}…");
             }
         }, error =>
         {
@@ -191,6 +170,8 @@ sealed class BulkPage : Page
         });
     }
 
+    // Puts every folder of the last run back the way it was: its previous color and look, or
+    // Windows' own folder if it had no color.
     void Undo()
     {
         var folders = lastRun.ToList();
@@ -199,11 +180,16 @@ sealed class BulkPage : Page
         RunInBackground(() =>
         {
             int i = 0;
-            foreach (var f in folders)
+            foreach (var b in folders)
             {
-                try { FolderIcon.Reset(f); } catch (Exception) { }
+                try
+                {
+                    if (b.Color is { } previous) FolderIcon.Apply(b.Folder, previous, b.Look);
+                    else FolderIcon.Reset(b.Folder);
+                }
+                catch (Exception) { }
                 int n = ++i;
-                BeginInvokeSafe(() => status.Text = $"Restoring {n} of {folders.Count}…");
+                PostToUi(() => status.Text = $"Restoring {n} of {folders.Count}…");
             }
         }, error =>
         {
@@ -215,10 +201,10 @@ sealed class BulkPage : Page
         });
     }
 
-    void BeginInvokeSafe(Action a)
+    protected override void Dispose(bool disposing)
     {
-        try { if (IsHandleCreated && !IsDisposed) BeginInvoke(a); }
-        catch (InvalidOperationException) { }
+        if (disposing) samples.ForEach(p => p.Dispose());
+        base.Dispose(disposing);
     }
 
     void SetBusy(bool on)

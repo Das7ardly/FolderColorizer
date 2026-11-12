@@ -14,8 +14,10 @@ static class StaWorker
             try { work(); }
             catch (Exception ex) { error = ex; }
             if (done == null) return;
-            if (context != null) context.Post(_ => done(error), null);
-            else done(error);
+            if (context == null) { done(error); return; }
+            // If the window has closed meanwhile there is nobody left to tell; that's fine.
+            try { context.Post(_ => done(error), null); }
+            catch (InvalidOperationException) { }
         });
         t.SetApartmentState(ApartmentState.STA);
         // Foreground: closing a window must not cut a folder change off halfway.

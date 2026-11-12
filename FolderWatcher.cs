@@ -10,10 +10,24 @@ sealed class FolderWatcher : IDisposable
     readonly Dictionary<string, FileSystemWatcher> watchers = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, System.Windows.Forms.Timer> pending = new(StringComparer.OrdinalIgnoreCase);
     readonly FileSystemWatcher listWatcher;
+    // Redraws run one at a time on a single STA thread (thumbnails use COM): at sign-in every
+    // colored folder is checked, and doing them all at once would spike disk and CPU. It is a
+    // background thread so the tray can quit promptly (e.g. for an update).
+    readonly System.Collections.Concurrent.BlockingCollection<Action> work = new();
 
     public FolderWatcher(Control ui)
     {
         this.ui = ui;
+        var worker = new Thread(() =>
+        {
+            foreach (var job in work.GetConsumingEnumerable())
+            {
+                try { job(); }
+                catch (Exception) { } // one odd folder must not stop the others
+            }
+        }) { IsBackground = true, Name = "Folder redraws" };
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.Start();
         Directory.CreateDirectory(IconMaker.DataDir);
         listWatcher = new FileSystemWatcher(IconMaker.DataDir, Path.GetFileName(FolderList.FilePath))
         {
@@ -25,18 +39,12 @@ sealed class FolderWatcher : IDisposable
 
         Sync();
         // Catch up on anything that changed while the tray wasn't running, and clear icons
-        // that earlier versions or interrupted changes left behind (off the UI thread).
-        var folders = watchers.Keys.ToArray();
-        StaWorker.Run(() =>
+        // that earlier versions or interrupted changes left behind.
+        foreach (var folder in watchers.Keys.ToArray())
         {
-            foreach (var folder in folders)
-            {
-                try { FolderIcon.CleanUpIcons(folder); }
-                catch (Exception) { } // one odd folder must not stop the tray
-            }
-        });
-        foreach (var folder in folders)
+            work.Add(() => FolderIcon.CleanUpIcons(folder));
             Schedule(folder);
+        }
     }
 
     // Marshals to the tray's UI thread; quietly does nothing while the tray is shutting down.
@@ -110,18 +118,19 @@ sealed class FolderWatcher : IDisposable
     }
 
     // Off the UI thread (thumbnails can be slow); any failure just leaves the old icon.
-    static void Refresh(string folder) => StaWorker.Run(() =>
+    void Refresh(string folder)
     {
-        try
+        if (work.IsAddingCompleted) return;
+        work.Add(() =>
         {
             if (!FolderIcon.Update(folder))
                 FolderList.Remove(folder);
-        }
-        catch (Exception) { }
-    });
+        });
+    }
 
     public void Dispose()
     {
+        work.CompleteAdding();
         listWatcher.Dispose();
         foreach (var w in watchers.Values) w.Dispose();
         foreach (var t in pending.Values) t.Dispose();

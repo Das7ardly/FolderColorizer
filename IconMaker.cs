@@ -121,22 +121,9 @@ static class IconMaker
     static Bitmap DrawGlass(int size, Color c, IReadOnlyList<Preview>? previews, PreviewStyle style)
     {
         float k = size / 256f;
-        using var scene = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        float top;
-        using (var g = Canvas(scene, k))
-        {
-            using (var b = new LinearGradientBrush(new RectangleF(16, 29, 224, 186),
-                       Color.FromArgb(185, Shade(c, 0.08f)), Color.FromArgb(218, Shade(c, -0.34f)), 90f))
-            using (var tab = RoundRect(new RectangleF(16, 30, 100, 40), 12))
-            using (var body = RoundRect(new RectangleF(16, 46, 224, 168), 14))
-            {
-                g.FillPath(b, tab);
-                g.FillPath(b, body);
-            }
-            using (var rim = new Pen(Color.FromArgb(80, 255, 255, 255), 2f))
-                g.DrawLine(rim, 29, 31.5f, 103, 31.5f);
-            top = previews is { Count: > 0 } ? DrawContents(g, previews, style).top : 84;
-        }
+        var (scene, top) = GlassBack(size, Color.FromArgb(185, Shade(c, 0.08f)), Color.FromArgb(218, Shade(c, -0.34f)),
+            rimAlpha: 80, outline: false, previews, style, emptyTop: 84);
+        using var _ = scene;
 
         var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using var o = Canvas(bmp, 1);
@@ -147,7 +134,7 @@ static class IconMaker
         using var front = RoundRect(fr, 14);
         var state = o.Save();
         o.SetClip(front);
-        using (var blurred = Blur(scene))
+        using (var blurred = Blur(scene, 14))
         {
             o.ResetTransform();
             o.DrawImage(blurred, 0, 0, size, size);
@@ -183,36 +170,45 @@ static class IconMaker
         return bmp;
     }
 
-    // Liquid glass: almost clear, a little magnification where the glass curves at its edges,
-    // a light tint that deepens towards the bottom, and specular rims (bright top-left,
-    // softer bottom-right) that give the panel its thickness.
+    // The back panel and the file previews of a glass folder, i.e. everything the front glass
+    // panel shows through. Returns where the front panel starts.
+    static (Bitmap scene, float top) GlassBack(int size, Color bodyTop, Color bodyBottom, int rimAlpha, bool outline,
+        IReadOnlyList<Preview>? previews, PreviewStyle style, float emptyTop)
+    {
+        var scene = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using var g = Canvas(scene, size / 256f);
+        using (var b = new LinearGradientBrush(new RectangleF(16, 29, 224, 186), bodyTop, bodyBottom, 90f))
+        using (var tab = RoundRect(new RectangleF(16, 30, 100, 40), 12))
+        using (var body = RoundRect(new RectangleF(16, 46, 224, 168), 14))
+        {
+            g.FillPath(b, tab);
+            g.FillPath(b, body);
+        }
+        using (var rim = new Pen(Color.FromArgb(rimAlpha, 255, 255, 255), 2f))
+            g.DrawLine(rim, 29, 31.5f, 103, 31.5f);
+        if (outline)
+        {
+            using var bodyRim = new Pen(Color.FromArgb(70, 255, 255, 255), 1.4f);
+            using var bodyEdge = RoundRect(new RectangleF(16.7f, 46.7f, 222.6f, 166.6f), 13.3f);
+            g.DrawPath(bodyRim, bodyEdge);
+        }
+        return (scene, previews is { Count: > 0 } ? DrawContents(g, previews, style).top : emptyTop);
+    }
+
     // Opacity of the liquid-glass body (top and bottom of its gradient): low enough that the
     // wallpaper shows through, high enough that the color still reads at 16 px.
     const int LiquidBodyTop = 140, LiquidBodyBottom = 192;
 
+    // Liquid glass: almost clear, a little magnification where the glass curves at its edges,
+    // a light tint that deepens towards the bottom, and specular rims (bright top-left,
+    // softer bottom-right) that give the panel its thickness. The body itself is partly
+    // see-through, so the wallpaper shows through like macOS glass.
     static Bitmap DrawLiquid(int size, Color c, IReadOnlyList<Preview>? previews, PreviewStyle style)
     {
         float k = size / 256f;
-        using var scene = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        float top;
-        using (var g = Canvas(scene, k))
-        {
-            // The body itself is partly see-through, so the wallpaper shows through like macOS glass.
-            using (var b = new LinearGradientBrush(new RectangleF(16, 29, 224, 186),
-                       Color.FromArgb(LiquidBodyTop, Shade(c, 0.18f)), Color.FromArgb(LiquidBodyBottom, Shade(c, -0.28f)), 90f))
-            using (var tab = RoundRect(new RectangleF(16, 30, 100, 40), 12))
-            using (var body = RoundRect(new RectangleF(16, 46, 224, 168), 14))
-            {
-                g.FillPath(b, tab);
-                g.FillPath(b, body);
-            }
-            using (var rim = new Pen(Color.FromArgb(150, 255, 255, 255), 2f))
-                g.DrawLine(rim, 29, 31.5f, 103, 31.5f);
-            using (var bodyRim = new Pen(Color.FromArgb(70, 255, 255, 255), 1.4f))
-            using (var bodyEdge = RoundRect(new RectangleF(16.7f, 46.7f, 222.6f, 166.6f), 13.3f))
-                g.DrawPath(bodyRim, bodyEdge);
-            top = previews is { Count: > 0 } ? DrawContents(g, previews, style).top : 92;
-        }
+        var (scene, top) = GlassBack(size, Color.FromArgb(LiquidBodyTop, Shade(c, 0.18f)), Color.FromArgb(LiquidBodyBottom, Shade(c, -0.28f)),
+            rimAlpha: 150, outline: true, previews, style, emptyTop: 92);
+        using var _ = scene;
 
         var fr = new RectangleF(16, top, 224, 214 - top);
         var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
@@ -335,22 +331,23 @@ static class IconMaker
         return g;
     }
 
-    // Cheap, smooth blur: shrink the image a lot, then scale it back up with bicubic filtering.
-    static Bitmap Blur(Bitmap src)
+    // Cheap, smooth blur: shrink the image by `factor`, then scale it back up with bicubic
+    // filtering. Also used for the settings window's glass backdrop.
+    public static Bitmap Blur(Bitmap src, int factor)
     {
-        int small = Math.Max(6, src.Width / 14);
-        using var tiny = new Bitmap(small, small, PixelFormat.Format32bppArgb);
+        int w = Math.Max(6, src.Width / factor), h = Math.Max(6, src.Height / factor);
+        using var tiny = new Bitmap(w, h, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(tiny))
         {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.DrawImage(src, 0, 0, small, small);
+            g.DrawImage(src, 0, 0, w, h);
         }
         var big = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(big))
         {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.Half;
-            g.DrawImage(tiny, new Rectangle(0, 0, src.Width, src.Height), 0, 0, small, small, GraphicsUnit.Pixel);
+            g.DrawImage(tiny, new Rectangle(0, 0, src.Width, src.Height), 0, 0, w, h, GraphicsUnit.Pixel);
         }
         return big;
     }

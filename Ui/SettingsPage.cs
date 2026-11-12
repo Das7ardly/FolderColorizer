@@ -1,5 +1,3 @@
-using System.Drawing.Drawing2D;
-
 namespace FolderColorizer.Ui;
 
 sealed class SettingsPage : Page
@@ -12,11 +10,10 @@ sealed class SettingsPage : Page
     readonly Card previewsCard = new();
     readonly Label previewsTitle = UiText.Make("Default look", Theme.Heading, Theme.Text);
     readonly Label previewsText = UiText.Make("Used for new colors from the right-click menu and the shortcut. You can still pick a look per folder.", Theme.Small, Theme.TextMuted);
-    readonly Segmented materialChoice = new("Classic", "Frosted", "Liquid glass");
-    static readonly FolderMaterial[] Materials = [FolderMaterial.Classic, FolderMaterial.Glass, FolderMaterial.Liquid];
-    Demo? demo;
+    readonly Segmented materialChoice = LookChoices.MaterialPicker();
+    readonly List<Preview> samples = LookChoices.SamplePictures();
     readonly List<(ChoiceTile tile, PreviewStyle style)> tiles = [];
-    readonly FlatButton redrawButton = new("Update colored folders", ButtonKind.Secondary, IconKind.Reset);
+    readonly FlatButton redrawButton = new("Use for all colored folders", ButtonKind.Secondary, IconKind.Reset);
     readonly Label status = UiText.Make("", Theme.Small, Theme.TextMuted);
 
     public SettingsPage() : base("Settings", "Changes apply right away.")
@@ -37,10 +34,10 @@ sealed class SettingsPage : Page
         };
 
         previewsCard.Controls.AddRange([previewsTitle, previewsText, materialChoice, redrawButton, status]);
-        demo = DemoPreviews();
-        foreach (var (label, style) in new[] { ("Window", PreviewStyle.Window), ("Card", PreviewStyle.Card), ("Fan", PreviewStyle.Fan), ("Plain", PreviewStyle.Plain) })
+        for (int i = 0; i < LookChoices.Styles.Length; i++)
         {
-            var tile = new ChoiceTile(label);
+            var style = LookChoices.Styles[i];
+            var tile = new ChoiceTile(LookChoices.StyleNames[i]);
             tile.Click += (_, _) => ChooseStyle(style);
             tiles.Add((tile, style));
             previewsCard.Controls.Add(tile);
@@ -48,11 +45,10 @@ sealed class SettingsPage : Page
         materialChoice.SelectedChanged += (_, _) =>
         {
             var settings = AppSettings.Load();
-            settings.Material = Materials[materialChoice.SelectedIndex];
+            settings.Material = LookChoices.MaterialAt(materialChoice);
             settings.Save();
             DrawTiles();
-            status.ForeColor = Theme.TextMuted;
-            status.Text = "New colors use this look. Update colored folders to redraw the ones you have.";
+            ShowDefaultChanged();
         };
         redrawButton.Click += (_, _) => RedrawAll();
         Controls.AddRange([integration, previewsCard]);
@@ -90,20 +86,26 @@ sealed class SettingsPage : Page
 
     void DrawTiles()
     {
-        var material = Materials[materialChoice.SelectedIndex];
+        var material = LookChoices.MaterialAt(materialChoice);
         foreach (var (tile, style) in tiles)
         {
             tile.Picture?.Dispose();
-            tile.Picture = IconMaker.DrawFolder(128, Palette.Colors[5].Color, demo!.Items, style, material);
+            tile.Picture = IconMaker.DrawFolder(128, Palette.Colors[5].Color, samples, style, material);
             tile.Invalidate();
         }
+    }
+
+    void ShowDefaultChanged()
+    {
+        status.ForeColor = Theme.TextMuted;
+        status.Text = "New colors get this look. Folders you already colored keep theirs.";
     }
 
     public override void Activate()
     {
         var settings = AppSettings.Load();
         var style = settings.PreviewStyle;
-        materialChoice.SetQuietly(Array.IndexOf(Materials, settings.Material));
+        materialChoice.SetQuietly(Array.IndexOf(LookChoices.Materials, settings.Material));
         DrawTiles();
         foreach (var (tile, s) in tiles) tile.Selected = s == style;
         rows[0].toggle.SetQuietly(Setup.IsMenuOn);
@@ -118,14 +120,17 @@ sealed class SettingsPage : Page
         settings.PreviewStyle = style;
         settings.Save();
         foreach (var (tile, s) in tiles) tile.Selected = s == style;
-        status.ForeColor = Theme.TextMuted;
-        status.Text = "New colors use this style. Update colored folders to redraw the ones you have.";
+        ShowDefaultChanged();
     }
 
+    // Gives every colored folder the default look, replacing looks picked per folder, so it asks first.
     void RedrawAll()
     {
         var folders = FolderList.All().Where(f => Directory.Exists(f) && FolderIcon.ColorOf(f) != null).ToList();
         if (folders.Count == 0) { status.Text = "No colored folders yet."; return; }
+        if (MessageBox.Show(this, $"Give all {folders.Count} colored folders this look? Looks you picked for single folders are replaced; their colors stay.",
+                "Folder Colorizer", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            return;
         redrawButton.Enabled = false;
         status.ForeColor = Theme.TextMuted;
         int done = 0, failed = 0;
@@ -135,8 +140,8 @@ sealed class SettingsPage : Page
             foreach (var f in folders)
             {
                 try { FolderIcon.Redraw(f, look); } catch (Exception) { failed++; }
-                done++;
-                BeginInvoke(() => status.Text = $"Updating {done} of {folders.Count}…");
+                int n = ++done;
+                PostToUi(() => status.Text = $"Updating {n} of {folders.Count}…");
             }
         }, error =>
         {
@@ -145,34 +150,10 @@ sealed class SettingsPage : Page
         });
     }
 
-    // A small landscape, so the style tiles show what file previews look like.
     protected override void Dispose(bool disposing)
     {
-        if (disposing) demo?.Dispose();
+        if (disposing) samples.ForEach(p => p.Dispose());
         base.Dispose(disposing);
-    }
-
-    sealed class Demo : IDisposable
-    {
-        public readonly List<Preview> Items = [];
-        public void Dispose() => Items.ForEach(p => p.Dispose());
-    }
-
-    static Demo DemoPreviews()
-    {
-        var demo = new Demo();
-        foreach (var (sky, hill) in new[] { ("38BDF8", "16A34A"), ("F59E0B", "7C3AED"), ("F472B6", "0EA5E9") })
-        {
-            var bmp = new Bitmap(400, 300);
-            using var g = Graphics.FromImage(bmp);
-            Theme.Smooth(g);
-            using (var b = new LinearGradientBrush(new Rectangle(0, 0, 400, 300), Theme.Hex(sky), Color.White, 90f)) g.FillRectangle(b, 0, 0, 400, 300);
-            g.FillEllipse(Brushes.LemonChiffon, 270, 50, 70, 70);
-            using (var b = new SolidBrush(Theme.Hex(hill))) g.FillEllipse(b, -80, 170, 380, 260);
-            using (var b = new SolidBrush(ControlPaint.Dark(Theme.Hex(hill), 0.1f))) g.FillEllipse(b, 160, 190, 360, 240);
-            demo.Items.Add(new Preview(bmp, true));
-        }
-        return demo;
     }
 
     protected override void Arrange()

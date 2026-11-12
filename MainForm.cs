@@ -89,7 +89,7 @@ sealed class MainForm : Form
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
-        Invalidate(true); // the backdrop is redrawn for the new size
+        Invalidate(true); // the backdrop is stretched to the new size
     }
 
     protected override void OnHandleCreated(EventArgs e)

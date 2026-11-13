@@ -159,18 +159,12 @@ static class FolderIcon
         return File.Exists(ini) && ColorOf(folder) == null && CurrentIconSpec(ini) != null;
     }
 
-    // Removes this folder's icons that are no longer in use (used by the tray at start-up to
-    // clear what older versions or interrupted changes left behind).
-    public static void CleanUpIcons(string folder)
-    {
-        var ini = Path.Combine(folder, "desktop.ini");
-        if (!Directory.Exists(folder) || Read(ini, OwnSection, "Color") == null)
-            return;
-        if (IconOf(folder) is not { } current)
-            return;
-        using (Lock(folder))
-            IconMaker.DeleteStaleFolderIcons(folder, current);
-    }
+    // Removes icons the colored folders no longer use (left by older versions or interrupted
+    // changes), in one pass over the icon folder. Returns the bytes freed.
+    public static long CleanUpIcons(IEnumerable<string> folders) =>
+        IconMaker.CleanUpAll(folders
+            .Where(f => Directory.Exists(f) && ColorOf(f) != null)
+            .Select(f => (f, IconOf(f))));
 
     // Rebuilds the icon if the files it should show have changed. Returns false
     // when the folder is gone or no longer colored by this app.

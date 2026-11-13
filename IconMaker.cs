@@ -84,6 +84,28 @@ static class IconMaker
         }
     }
 
+    // One pass over the icon folder for many folders at once: removes each listed folder's
+    // icons except the one it uses now (and except icons less than a minute old). Icons of
+    // folders that aren't listed are left alone. Returns the bytes freed.
+    public static long CleanUpAll(IEnumerable<(string Folder, string? Current)> folders)
+    {
+        if (!Directory.Exists(IconDir)) return 0;
+        var current = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (folder, icon) in folders) current[FolderHash(folder)] = icon;
+        var cutoff = DateTime.Now.AddMinutes(-1);
+        long freed = 0;
+        foreach (var f in new DirectoryInfo(IconDir).EnumerateFiles($"{FolderIconPrefix}*.ico"))
+        {
+            var parts = f.Name.Split('_');
+            if (parts.Length < 3 || !current.TryGetValue(parts[1], out var keep)) continue;
+            if (string.Equals(f.FullName, keep, StringComparison.OrdinalIgnoreCase) || f.LastWriteTime > cutoff) continue;
+            long size = f.Length;
+            DeleteFolderIcon(f.FullName);
+            if (!File.Exists(f.FullName)) freed += size;
+        }
+        return freed;
+    }
+
     static string FolderHash(string folder) =>
         Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(
             System.Text.Encoding.UTF8.GetBytes(folder.ToLowerInvariant())))[..10].ToLowerInvariant();
@@ -499,12 +521,13 @@ static class IconMaker
 
     static void WriteIco(string path, Func<int, Bitmap> render)
     {
-        // PNG for the 256px frame, classic 32-bit bitmaps for the rest: some older
-        // Windows code paths can't read PNG frames at small sizes.
+        // Classic 32-bit bitmaps up to 48 px (some older Windows code paths can't read PNG
+        // frames at small sizes), compressed PNG from 64 px up: the large uncompressed frames
+        // made each icon about 160 KB, which adds up when many folders are colored.
         var pngs = Sizes.Select(s =>
         {
             using var bmp = render(s);
-            if (s < 256) return ToDib(bmp);
+            if (s <= 48) return ToDib(bmp);
             using var ms = new MemoryStream();
             bmp.Save(ms, ImageFormat.Png);
             return ms.ToArray();

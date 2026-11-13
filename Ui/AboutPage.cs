@@ -37,17 +37,13 @@ sealed class AboutPage : Page
         };
         cleanButton.Click += (_, _) =>
         {
-            long before = IconBytes();
+            long freed = 0;
             cleanButton.Enabled = false;
-            RunInBackground(() =>
-            {
-                foreach (var f in FolderList.All().Where(Directory.Exists))
-                    FolderIcon.CleanUpIcons(f);
-            }, error =>
+            RunInBackground(() => freed = FolderIcon.CleanUpIcons(FolderList.All()), error =>
             {
                 cleanButton.Enabled = true;
                 RefreshStorage();
-                Report(error, $"Freed {Mb(Math.Max(0, before - IconBytes()))}.", status);
+                Report(error, $"Freed {Mb(freed)}.", status);
             });
         };
     }

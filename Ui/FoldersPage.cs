@@ -1,23 +1,23 @@
 namespace FolderColorizer.Ui;
 
-// Every folder this app has colored, with quick actions.
+// Every folder this app has colored, searchable, with per-folder and "all shown" actions.
 sealed class FoldersPage : Page
 {
-    readonly BackdropFlow list = new()
-    {
-        FlowDirection = FlowDirection.TopDown,
-        WrapContents = false,
-        AutoScroll = true,
-    };
+    readonly SearchBox search = new();
+    readonly FlatButton restoreShown = new("Restore all shown", ButtonKind.Danger, IconKind.Reset);
+    readonly FolderListView list = new();
     readonly Card emptyCard = new();
     readonly Label emptyTitle = UiText.Make("No colored folders yet", Theme.Heading, Theme.Text);
     readonly Label emptyText = UiText.Make("Folders you color show up here, so you can change or restore them later.", Theme.Body, Theme.TextMuted);
     readonly FlatButton emptyButton = new("Color a folder", ButtonKind.Primary, IconKind.Palette);
-    readonly Action<string> openInColorPage;
+    readonly System.Windows.Forms.Timer searchDelay = new() { Interval = 200 };
+
+    List<FolderListView.Entry> all = [];
+    bool busy;
+    int loadId;
 
     public FoldersPage(Action<string> openInColorPage, Action goColor) : base("Colored folders", "")
     {
-        this.openInColorPage = openInColorPage;
         emptyCard.Controls.AddRange([emptyTitle, emptyText, emptyButton]);
         emptyCard.Paint += (_, e) =>
         {
@@ -25,142 +25,158 @@ sealed class FoldersPage : Page
             Icons.Draw(e.Graphics, IconKind.Folder, new RectangleF((emptyCard.Width - side) / 2, emptyTitle.Top - side - 14 * S, side, side), Theme.TextMuted, 1.6f);
         };
         emptyButton.Click += (_, _) => goColor();
-        Controls.AddRange([list, emptyCard]);
-        list.HandleCreated += (_, _) => Theme.DarkScrollBars(list);
-        list.Resize += (_, _) => SizeRows();
+        list.Change += openInColorPage;
+        list.Restore += f => RestoreFolders([f], ask: false);
+        restoreShown.Click += (_, _) => RestoreFolders(list.Entries.Select(e => e.Folder).ToList(), ask: true);
+        search.TextChanged += (_, _) => { searchDelay.Stop(); searchDelay.Start(); };
+        searchDelay.Tick += (_, _) => { searchDelay.Stop(); ApplyFilter(); };
+        Controls.AddRange([search, restoreShown, list, emptyCard]);
     }
 
     public override void Activate() => Reload();
 
+    // Reading thousands of desktop.ini files takes a moment, so it runs in the background.
     void Reload()
     {
-        list.SuspendLayout();
-        foreach (Control c in list.Controls) c.Dispose();
-        list.Controls.Clear();
-        var folders = FolderList.All()
-            .Where(f => Directory.Exists(f) && FolderIcon.ColorOf(f) != null)
-            .OrderBy(f => Path.GetFileName(f), StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
-        foreach (var f in folders)
+        int id = ++loadId;
+        SubtitleLabel.Text = "Looking up colored folders…";
+        List<FolderListView.Entry>? found = null;
+        RunInBackground(() =>
         {
-            var row = new FolderRow(f);
-            row.Change += () => openInColorPage(f);
-            row.Restore += () => RestoreFolder(row, f);
-            list.Controls.Add(row);
-        }
-        list.ResumeLayout();
-        SubtitleLabel.Text = folders.Count switch
+            found = [];
+            foreach (var f in FolderList.All())
+                if (Directory.Exists(f) && FolderIcon.ColorOf(f) is { } c)
+                    found.Add(new FolderListView.Entry(f, Path.GetFileName(f) is { Length: > 0 } n ? n : f, Path.GetDirectoryName(f) ?? "", c));
+            found.Sort((a, b) => string.Compare(a.Folder, b.Folder, StringComparison.CurrentCultureIgnoreCase));
+        }, error =>
         {
-            0 => "Nothing here yet.",
-            1 => "1 folder has a color.",
-            _ => $"{folders.Count} folders have a color.",
-        };
-        list.Visible = folders.Count > 0;
-        emptyCard.Visible = folders.Count == 0;
-        SizeRows();
-        PerformLayout();
-    }
-
-    void RestoreFolder(FolderRow row, string folder)
-    {
-        row.SetBusy(true);
-        RunInBackground(() => FolderIcon.Reset(folder), error =>
-        {
-            if (error != null)
-            {
-                row.SetBusy(false);
-                MessageBox.Show(this, error.Message, "Folder Colorizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            else Reload();
+            if (id != loadId) return;
+            all = found ?? [];
+            list.ForgetIcons();
+            ApplyFilter();
         });
     }
 
-    void SizeRows()
+    void ApplyFilter()
     {
-        int w = list.ClientSize.Width - (int)(4 * S);
-        foreach (Control c in list.Controls)
-            c.Size = new Size(Math.Max(200, w), (int)(68 * S));
+        var term = search.Text.Trim();
+        var shown = term.Length == 0 ? all
+            : all.Where(e => e.Folder.Contains(term, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        list.Entries = shown;
+        SubtitleLabel.Text = all.Count switch
+        {
+            0 => "Nothing here yet.",
+            1 => "1 folder has a color.",
+            _ when shown.Count == all.Count => $"{all.Count:N0} folders have a color.",
+            _ => $"{all.Count:N0} folders have a color · {shown.Count:N0} match “{term}”.",
+        };
+        restoreShown.Text = shown.Count == all.Count ? "Restore all" : $"Restore {shown.Count:N0} shown";
+        restoreShown.Enabled = shown.Count > 0 && !busy;
+        emptyCard.Visible = all.Count == 0;
+        list.Visible = search.Visible = restoreShown.Visible = all.Count > 0;
+        PerformLayout();
+    }
+
+    void RestoreFolders(List<string> folders, bool ask)
+    {
+        if (folders.Count == 0 || busy) return;
+        if (ask && MessageBox.Show(this,
+                $"Restore {folders.Count:N0} folders to their usual Windows icon? Their colors are removed; nothing inside the folders changes.",
+                "Folder Colorizer", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            return;
+        busy = true;
+        restoreShown.Enabled = false;
+        UseWaitCursor = true;
+        int failed = 0;
+        RunInBackground(() =>
+        {
+            int i = 0;
+            foreach (var f in folders)
+            {
+                try { FolderIcon.Reset(f); } catch (Exception) { failed++; }
+                int n = ++i;
+                if (folders.Count > 1 && n % 10 == 0) PostToUi(() => SubtitleLabel.Text = $"Restoring {n:N0} of {folders.Count:N0}…");
+            }
+        }, error =>
+        {
+            busy = false;
+            UseWaitCursor = false;
+            if (error != null || failed > 0)
+                MessageBox.Show(this, error?.Message ?? $"{failed:N0} folders could not be restored (read-only or in use).",
+                    "Folder Colorizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Reload();
+        });
     }
 
     protected override void Arrange()
     {
-        list.Bounds = new Rectangle(Pad - (int)(4 * S), Top0, Width - Pad * 2 + (int)(8 * S), Height - Top0 - (int)(16 * S));
-        emptyCard.Bounds = new Rectangle(Pad, Top0, Width - Pad * 2, (int)(300 * S));
+        int w = Width - Pad * 2;
+        restoreShown.Size = restoreShown.GetPreferredSize(Size.Empty);
+        restoreShown.Location = new Point(Width - Pad - restoreShown.Width, Top0 - (int)(2 * S));
+        search.Bounds = new Rectangle(Pad, Top0, Math.Min((int)(360 * S), restoreShown.Left - Pad - (int)(12 * S)), (int)(34 * S));
+        int listTop = search.Bottom + (int)(14 * S);
+        list.Bounds = new Rectangle(Pad, listTop, w, Height - listTop - (int)(16 * S));
+        emptyCard.Bounds = new Rectangle(Pad, Top0, w, (int)(300 * S));
         int cx = emptyCard.Width / 2;
         emptyTitle.Location = new Point(cx - emptyTitle.Width / 2, emptyCard.Height / 2 - (int)(20 * S));
         emptyText.Location = new Point(cx - emptyText.Width / 2, emptyTitle.Bottom + (int)(6 * S));
         emptyButton.Size = emptyButton.GetPreferredSize(Size.Empty);
         emptyButton.Location = new Point(cx - emptyButton.Width / 2, emptyText.Bottom + (int)(18 * S));
     }
-}
-
-// One folder: its current icon, name, path, color and actions.
-sealed class FolderRow : Card
-{
-    readonly ImageBox icon = new();
-    readonly Label name, path;
-    readonly FlatButton change = new("Change", ButtonKind.Secondary, IconKind.Palette);
-    readonly FlatButton open = new("Open", ButtonKind.Ghost, IconKind.Open);
-    readonly FlatButton restore = new("Restore", ButtonKind.Ghost, IconKind.Reset);
-    readonly Color color;
-    readonly ToolTip tip = new();
-    public event Action? Change, Restore;
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) tip.Dispose();
+        if (disposing) searchDelay.Dispose();
         base.Dispose(disposing);
     }
+}
 
-    public FolderRow(string folder)
+// A rounded search field: a borderless TextBox on a drawn background with a search hint.
+sealed class SearchBox : Panel
+{
+    readonly TextBox box = new()
     {
-        Margin = new Padding(2, 0, 2, (int)(8 * DeviceDpi / 96f));
-        color = FolderIcon.ColorOf(folder) ?? Color.Gray;
-        name = UiText.Make(Path.GetFileName(folder), Theme.BodyStrong, Theme.Text);
-        path = UiText.Make(Path.GetDirectoryName(folder) ?? folder, Theme.Small, Theme.TextMuted);
-        tip.SetToolTip(path, folder);
-        tip.SetToolTip(name, folder);
-        try
-        {
-            if (FolderIcon.IconOf(folder) is { } file && File.Exists(file))
-                using (var ico = new Icon(file, 48, 48)) icon.Image = ico.ToBitmap();
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException) { }
-        Controls.AddRange([icon, name, path, change, open, restore]);
-        change.Click += (_, _) => Change?.Invoke();
-        restore.Click += (_, _) => Restore?.Invoke();
-        open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
-        Paint += (_, e) =>
-        {
-            // Small colour dot after the name.
-            float s = DeviceDpi / 96f, d = 10 * s;
-            Theme.Smooth(e.Graphics);
-            using var b = new SolidBrush(color);
-            e.Graphics.FillEllipse(b, name.Right + 8 * s, name.Top + (name.Height - d) / 2, d, d);
-        };
+        BorderStyle = BorderStyle.None,
+        BackColor = Theme.Muted,
+        ForeColor = Theme.Text,
+        Font = Theme.Body,
+        PlaceholderText = "Search folders",
+    };
+
+    public SearchBox()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Controls.Add(box);
+        box.TextChanged += (_, e) => OnTextChanged(e);
+        box.GotFocus += (_, _) => Invalidate();
+        box.LostFocus += (_, _) => Invalidate();
+        Cursor = Cursors.IBeam;
+        Click += (_, _) => box.Focus();
     }
 
-    public void SetBusy(bool busy)
-    {
-        foreach (var b in new[] { change, open, restore }) b.Enabled = !busy;
-        UseWaitCursor = busy;
-    }
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public override string Text { get => box.Text; set => box.Text = value ?? ""; }
 
-    protected override void OnLayout(LayoutEventArgs e)
+    protected override void OnLayout(LayoutEventArgs levent)
     {
-        base.OnLayout(e);
+        base.OnLayout(levent);
         float s = DeviceDpi / 96f;
-        icon.Bounds = new Rectangle((int)(14 * s), (Height - (int)(44 * s)) / 2, (int)(44 * s), (int)(44 * s));
-        foreach (var b in new[] { change, open, restore }) b.Size = b.GetPreferredSize(Size.Empty);
-        restore.Location = new Point(Width - restore.Width - (int)(14 * s), (Height - restore.Height) / 2);
-        open.Location = new Point(restore.Left - open.Width - (int)(4 * s), restore.Top);
-        change.Location = new Point(open.Left - change.Width - (int)(8 * s), restore.Top);
-        int textX = icon.Right + (int)(14 * s), textW = Math.Max(60, change.Left - textX - (int)(30 * s));
-        // One line each, cut with "…" (the full path is in the tooltip).
-        foreach (var l in new[] { name, path }) l.AutoSize = false;
-        name.Size = new Size(Math.Min(textW, TextRenderer.MeasureText(name.Text, name.Font).Width + 4), name.Font.Height + 4);
-        path.Size = new Size(textW + (int)(20 * s), path.Font.Height + 4);
-        name.Location = new Point(textX, Height / 2 - name.Height);
-        path.Location = new Point(textX, Height / 2 + (int)(1 * s));
+        int left = (int)(36 * s);
+        box.Bounds = new Rectangle(left, (Height - box.PreferredHeight) / 2, Width - left - (int)(12 * s), box.PreferredHeight);
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        Backdrop.Paint(this, e.Graphics, blur: false);
+        Theme.Smooth(e.Graphics);
+        float s = DeviceDpi / 96f;
+        var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+        Theme.FillRound(e.Graphics, Theme.Muted, r, 10 * s);
+        Theme.StrokeRound(e.Graphics, box.Focused ? Theme.Accent : Color.FromArgb(40, 255, 255, 255), r, 10 * s, box.Focused ? 1.5f * s : 1f);
+        // Magnifying glass.
+        using var pen = new Pen(Theme.TextMuted, 1.8f * s);
+        float cx = 16 * s, cy = Height / 2f, rad = 6 * s;
+        e.Graphics.DrawEllipse(pen, cx - rad, cy - rad - 1 * s, rad * 2, rad * 2);
+        e.Graphics.DrawLine(pen, cx + rad * 0.7f, cy + rad * 0.7f - 1 * s, cx + rad * 1.45f, cy + rad * 1.45f - 1 * s);
     }
 }

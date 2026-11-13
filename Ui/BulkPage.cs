@@ -59,7 +59,7 @@ sealed class BulkPage : Page
         recolorToggle.CheckedChanged += (_, _) => Rescan();
         swatches.SelectionChanged += (_, _) => { colorName.Text = swatches.SelectedName; DrawSample(); };
         materialChoice.SelectedChanged += (_, _) => DrawSample();
-        styleChoice.SelectedChanged += (_, _) => DrawSample();
+        styleChoice.SelectedChanged += (_, _) => { DrawSample(); Rescan(); }; // the space estimate depends on it
         applyButton.Click += (_, _) => Run();
         cancelButton.Click += (_, _) => { stop = true; cancelButton.Enabled = false; };
         undoButton.Click += (_, _) => Undo();
@@ -112,6 +112,9 @@ sealed class BulkPage : Page
             };
             if (scan.AlreadyColored > 0) parts.Add($"{scan.AlreadyColored} already have a color and stay as they are.");
             if (scan.Customized > 0) parts.Add($"{scan.Customized} with their own icon (set by Windows or another app) are left alone.");
+            if (scan.InsideApps > 0) parts.Add($"{scan.InsideApps:N0} folders inside programs (folders with .exe or .dll files) are skipped.");
+            if (scan.WithFiles > 0 && LookChoices.StyleAt(styleChoice) != PreviewStyle.Plain)
+                parts.Add($"File previews need about {SizeText(scan.PreviewBytes)} of icons; the Plain look needs almost none.");
             if (scan.HitLimit) parts.Add($"Stopped counting at {BulkScan.Limit}; choose a smaller folder for the rest.");
             if (scan.Targets.Count > 0)
                 parts.Add("For example: " + string.Join(", ", scan.Targets.Take(4).Select(Path.GetFileName)) + (scan.Targets.Count > 4 ? "…" : "."));
@@ -137,11 +140,23 @@ sealed class BulkPage : Page
         sample.Image = IconMaker.DrawFolder(128, c, style == PreviewStyle.Plain ? null : samples, style, LookChoices.MaterialAt(materialChoice));
     }
 
+    static string SizeText(long bytes) => bytes < 1024 * 1024 ? "under 1 MB" : $"{bytes / 1024.0 / 1024:N0} MB";
+
+    // Big runs get a second look: they're easy to start by accident and slow to undo.
+    const int ConfirmAbove = 100;
+
     void Run()
     {
         if (scan is not { Targets.Count: > 0 } || swatches.SelectedColor is not { } color) return;
         var targets = scan.Targets.ToList();
         var look = new Look(LookChoices.StyleAt(styleChoice), LookChoices.MaterialAt(materialChoice));
+        if (targets.Count > ConfirmAbove)
+        {
+            var space = look.Style == PreviewStyle.Plain || scan.WithFiles == 0 ? "" : $" File previews will use about {SizeText(scan.PreviewBytes)}.";
+            if (MessageBox.Show(this, $"Color {targets.Count:N0} folders?{space} You can undo it right after, or later from Colored folders.",
+                    "Folder Colorizer", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                return;
+        }
         var done = new List<Before>();
         int failed = 0;
         stop = false;

@@ -109,7 +109,7 @@ sealed class MainForm : Form
         form.Show();
         void Shot(string name)
         {
-            for (int i = 0; i < 10; i++) { Application.DoEvents(); Thread.Sleep(30); }
+            for (int i = 0; i < 40; i++) { Application.DoEvents(); Thread.Sleep(30); } // let background loads finish
             using var bmp = new Bitmap(form.Width, form.Height, PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
             {

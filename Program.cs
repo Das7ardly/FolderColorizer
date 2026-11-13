@@ -55,6 +55,16 @@ static class Program
                         throw new IOException($"Colored {targets.Count - failed.Count} of {targets.Count} folders. These could not be changed:\n" + string.Join("\n", failed.Take(10)));
                     break;
                 }
+                case "--scan":
+                {
+                    // --scan <folder> <out.txt> [--deep] [--recolor]: what Color many folders would do, changing nothing.
+                    var s = BulkScan.Run(args[1], args.Contains("--deep"), args.Contains("--recolor"));
+                    File.WriteAllLines(args[2], [
+                        $"targets={s.Targets.Count} alreadyColored={s.AlreadyColored} customized={s.Customized} insideApps={s.InsideApps} withFiles={s.WithFiles} previewMB={s.PreviewBytes / 1048576} hitLimit={s.HitLimit}",
+                        .. s.Targets.Take(40),
+                    ]);
+                    break;
+                }
                 case "--screenshots":
                     try { MainForm.SaveScreenshots(args[1], args.Length > 2 ? args[2] : null); }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(args[1], "error.txt"), ex.ToString()); return 1; }

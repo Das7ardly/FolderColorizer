@@ -2,7 +2,7 @@
 ; Build: dotnet publish (self-contained, see build-installer.ps1), then ISCC installer.iss
 
 #define AppName "Folder Colorizer"
-#define AppVersion "1.2.1"
+#define AppVersion "1.2.2"
 #define AppExe "FolderColorizer.exe"
 
 [Setup]

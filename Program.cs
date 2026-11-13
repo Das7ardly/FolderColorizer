@@ -18,6 +18,10 @@ static class Program
                 case "--set":
                     FolderIcon.Apply(args[2], Palette.FromHex(args[1]));
                     break;
+                case "--look":
+                    // --look <Classic|Glass|Liquid|Window|Card|Fan|Plain> <folder>: the right-click Style menu.
+                    FolderIcon.ChangeLook(args[2], args[1]);
+                    break;
                 case "--reset":
                     FolderIcon.Reset(args[1]);
                     break;

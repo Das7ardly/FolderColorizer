@@ -34,6 +34,18 @@ static class FolderIcon
             ApplyLocked(folder, color, requested, look);
     }
 
+    // Changes one part of a folder's look ("Liquid", "Card"...) and keeps the rest, and its
+    // color. A folder without a color gets Blue in that look. Used by the right-click Style menu.
+    public static void ChangeLook(string folder, string part)
+    {
+        folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+        var look = LookOf(folder);
+        if (Enum.TryParse<FolderMaterial>(part, ignoreCase: true, out var material)) look = look with { Material = material };
+        else if (Enum.TryParse<PreviewStyle>(part, ignoreCase: true, out var style)) look = look with { Style = style };
+        else throw new ArgumentException($"Unknown style: {part}");
+        Apply(folder, ColorOf(folder) ?? Palette.Colors.First(c => c.Name == "Blue").Color, look);
+    }
+
     // The look a folder was given, falling back to the defaults from Settings.
     public static Look LookOf(string folder)
     {

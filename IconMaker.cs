@@ -109,6 +109,15 @@ static class IconMaker
     static string FolderHash(string folder) =>
         Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(
             System.Text.Encoding.UTF8.GetBytes(folder.ToLowerInvariant())))[..10].ToLowerInvariant();
+    // A small sample of a look (in blue, with sample pictures) for the right-click Style menu.
+    public static string EnsureLookIcon(Look look) =>
+        Ensure($"look1_{look.Material}_{look.Style}.ico".ToLowerInvariant(), s =>
+        {
+            var samples = s >= MinPreviewSize && look.Style != PreviewStyle.Plain ? Ui.LookChoices.SamplePictures() : [];
+            try { return DrawFolder(s, Palette.Colors.First(c => c.Name == "Blue").Color, samples, look.Style, look.Material); }
+            finally { samples.ForEach(p => p.Dispose()); }
+        });
+
     public static string EnsureAppIcon() => Ensure($"{Version}_app.ico", DrawAppFolder);
     public static Bitmap DrawAppIcon(int size) => DrawAppFolder(size);
     public static void WriteAppIcon(string path) => WriteIco(path, DrawAppFolder);

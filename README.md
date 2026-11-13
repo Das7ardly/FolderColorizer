@@ -14,7 +14,7 @@ Get `FolderColorizer-Setup-x.y.z.exe` from the [latest release](../../releases/l
 
 ## Ways to color folders
 
-1. Right-click a folder, then **Folder color** (on Windows 11 it's under **Show more options**, or you can turn on the full menu in Settings).
+1. Right-click a folder, then **Folder color** (on Windows 11 it's under **Show more options**, or you can turn on the full menu in Settings). Its **Style** submenu changes the material (Classic, Frosted glass, Liquid glass) or the file previews (Window, Card, Fan, none) and keeps the folder's color.
 2. Select folders in File Explorer and press **Ctrl+Shift+F**. A small picker opens; press **1** to **0** for a color, **C** for a custom color, **R** to restore.
 3. Open **Folder Colorizer** from the Start menu, then drop a folder on the window or browse to one. You see the exact icon before you apply it.
 4. **Color many folders** colors every folder inside a folder that has no color yet, optionally including folders inside subfolders. It shows what will change first (and how much space file previews need), leaves folders with their own icon (set by Windows or another app) alone, doesn't go inside programs (folders with .exe or .dll files) or tool folders like `node_modules` and `.git`, asks before coloring more than 100 folders, and has an Undo.

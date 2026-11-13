@@ -63,7 +63,24 @@ static class Setup
         foreach (var c in Palette.Colors)
             AddCommand(root, $"{i++:D2}", c.Name, IconMaker.EnsureIcon(c.Color), $"\"{exe}\" --set {Palette.Hex(c.Color)} \"%1\"", false);
         AddCommand(root, $"{i++:D2}", "Custom color…", appIcon, $"\"{exe}\" --custom \"%1\"", true);
+        AddStyleMenu(root, $"{i++:D2}", exe);
         AddCommand(root, $"{i:D2}", "Restore default", @"%SystemRoot%\System32\imageres.dll,-3", $"\"{exe}\" --reset \"%1\"", false);
+    }
+
+    // "Style ▸": material and file previews, each keeping the folder's color.
+    static void AddStyleMenu(RegistryKey root, string id, string exe)
+    {
+        using var style = root.CreateSubKey($@"shell\{id}");
+        style.SetValue("MUIVerb", "Style");
+        style.SetValue("Icon", IconMaker.EnsureLookIcon(new Look(PreviewStyle.Window, FolderMaterial.Liquid)));
+        style.SetValue("SubCommands", "");
+        int j = 0;
+        foreach (var (material, label) in new[] { (FolderMaterial.Classic, "Classic"), (FolderMaterial.Glass, "Frosted glass"), (FolderMaterial.Liquid, "Liquid glass") })
+            AddCommand(style, $"{j++:D2}", label, IconMaker.EnsureLookIcon(new Look(PreviewStyle.Plain, material)),
+                $"\"{exe}\" --look {material} \"%1\"", false);
+        foreach (var (preview, label) in new[] { (PreviewStyle.Window, "Window previews"), (PreviewStyle.Card, "Card previews"), (PreviewStyle.Fan, "Fan previews"), (PreviewStyle.Plain, "No previews") })
+            AddCommand(style, $"{j++:D2}", label, IconMaker.EnsureLookIcon(new Look(preview, FolderMaterial.Classic)),
+                $"\"{exe}\" --look {preview} \"%1\"", separatorBefore: preview == PreviewStyle.Window);
     }
 
     static void AddCommand(RegistryKey root, string id, string label, string icon, string command, bool separatorBefore)
